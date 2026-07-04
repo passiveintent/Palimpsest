@@ -1,0 +1,46 @@
+{
+  "cases": [
+    {
+      "tenant_key": "test-vector-key",
+      "shard_id": 1,
+      "epoch_idx": 0,
+      "view_id": 0,
+      "expected_seed": 14280488303727161635
+    },
+    {
+      "tenant_key": "test-vector-key",
+      "shard_id": 1,
+      "epoch_idx": 1,
+      "view_id": 0,
+      "expected_seed": 4974233972859752873
+    },
+    {
+      "tenant_key": "test-vector-key",
+      "shard_id": 2,
+      "epoch_idx": 0,
+      "view_id": 1,
+      "expected_seed": 13147501714350485542
+    },
+    {
+      "tenant_key": "test-vector-key",
+      "shard_id": 0,
+      "epoch_idx": 0,
+      "view_id": 0,
+      "expected_seed": 17362344471701957723
+    },
+    {
+      "tenant_key": "test-vector-key",
+      "shard_id": 18446744073709551615,
+      "epoch_idx": 4294967295,
+      "view_id": 65535,
+      "expected_seed": 9718342330319355967
+    },
+    {
+      "tenant_key": "another-tenant-key",
+      "shard_id": 1,
+      "epoch_idx": 0,
+      "view_id": 0,
+      "expected_seed": 17908014656131943488
+    }
+  ]
+}
