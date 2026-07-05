@@ -25,11 +25,11 @@ byte-exact.
   *answers* are identical (same support, max value delta < 1 ULP at f64); only
   the serialised representation differs.
 
-  Mitigation: `gen_golden.py` rounds all floats in recovery vectors to 10
-  decimal places via `write_recovery_json` / `_canon` before serialising. This
-  is far above the ~1e-12 numerical noise floor and well below the Go golden
-  tests' 1e-4 tolerance, so it produces stable committed JSON on every machine
-  without affecting any assertion that matters.
+  Mitigation: `gen_golden.py` rounds all floats to 9 decimal places (1e-9)
+  via `_canon` before serialising, and all JSON output uses `sort_keys=True`.
+  This is far above the ~1e-12 numerical noise floor and well below the Go
+  golden tests' 1e-4 tolerance, so it produces stable committed JSON on every
+  machine without affecting any assertion that matters.
 
   Go golden tests for recovery already use tolerance comparisons (not
   byte-exact diff), so nothing fails — the rounding merely prevents `make

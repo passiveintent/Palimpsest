@@ -28,7 +28,8 @@ func baseFrame() *Frame {
 		M:          256,
 		D:          4,
 		Predictor:  1,
-		Reserved:   0,
+		KeyVersion: 0,
+		Codec:      CodecNone,
 		Energy:     1.5,
 		QuantScale: 0.01,
 		DictRoot:   0xdeadbeefcafef00d,
@@ -126,7 +127,7 @@ func assertFrameEqual(t *testing.T, want, got *Frame) {
 		got.Flags != want.Flags || got.Bits != want.Bits || got.EmitterID != want.EmitterID ||
 		got.ShardID != want.ShardID || got.Epoch != want.Epoch || got.Seq != want.Seq ||
 		got.ViewID != want.ViewID || got.M != want.M || got.D != want.D ||
-		got.Predictor != want.Predictor || got.Reserved != want.Reserved ||
+		got.Predictor != want.Predictor || got.KeyVersion != want.KeyVersion || got.Codec != want.Codec ||
 		got.Energy != want.Energy || got.QuantScale != want.QuantScale || got.DictRoot != want.DictRoot {
 		t.Fatalf("fixed fields differ:\nwant=%+v\ngot=%+v", want, got)
 	}
@@ -236,5 +237,91 @@ func TestUnmarshalTrailingBytes(t *testing.T) {
 	body = appendU32(body, crc)
 	if _, err := Unmarshal(body); !errors.Is(err, ErrInvalidFrame) {
 		t.Fatalf("want ErrInvalidFrame for trailing bytes, got %v", err)
+	}
+}
+
+// TestUnmarshalV1Compat verifies that a hand-built v1 frame (one reserved
+// byte after predictor, no key_version/codec) decodes correctly: the
+// resulting Frame must have Version=1, KeyVersion=0, and Codec derived from
+// flags.bit0 per SPEC.md §"Version compatibility".
+func TestUnmarshalV1Compat(t *testing.T) {
+	// Build a v1 frame body by hand: identical to what the old encoder wrote.
+	// Layout: magic(4) | ver(1) | type(1) | flags(1) | bits(1) |
+	//         emitter(8) | shard(8) | epoch(8) | seq(4) |
+	//         view(2) | m(4) | d(1) | predictor(1) | reserved(1) |
+	//         energy(4) | quant_scale(4) | dict_root(8) |
+	//         dd_count(4) | blob_len(4) | payload_len(4) | payload(4) | crc(4)
+	buf := []byte{}
+	buf = append(buf, Magic[:]...)
+	buf = appendU8(buf, 1) // version=1
+	buf = appendU8(buf, FrameTypeResidual)
+	buf = appendU8(buf, FlagGzip) // flags: bit0 gzip set
+	buf = appendU8(buf, 8)        // bits
+	buf = appendU64(buf, 0xAABBCCDDEEFF0011)
+	buf = appendU64(buf, 99)      // shard
+	buf = appendU64(buf, 5)       // epoch
+	buf = appendU32(buf, 7)       // seq
+	buf = appendU16(buf, 0)       // view_id
+	buf = appendU32(buf, 64)      // m
+	buf = appendU8(buf, 4)        // d
+	buf = appendU8(buf, 0)        // predictor
+	buf = appendU8(buf, 0)        // reserved (v1)
+	buf = appendF32(buf, 1.0)     // energy
+	buf = appendF32(buf, 0.5)     // quant_scale
+	buf = appendU64(buf, 0xDEAD)  // dict_root
+	buf = appendU32(buf, 0)       // dd_count
+	buf = appendU32(buf, 0)       // blob_len
+	buf = appendU32(buf, 4)       // payload_len
+	buf = append(buf, 1, 2, 3, 4) // payload
+	crc := crc32.Checksum(buf, crcTable)
+	buf = appendU32(buf, crc)
+
+	f, err := Unmarshal(buf)
+	if err != nil {
+		t.Fatalf("Unmarshal(v1 frame): %v", err)
+	}
+	if f.Version != 1 {
+		t.Errorf("Version = %d, want 1", f.Version)
+	}
+	if f.KeyVersion != 0 {
+		t.Errorf("KeyVersion = %d, want 0 (implied by v1)", f.KeyVersion)
+	}
+	if f.Codec != CodecGzip {
+		t.Errorf("Codec = %d, want %d (derived from flags.bit0=gzip)", f.Codec, CodecGzip)
+	}
+	if f.Flags&FlagGzip == 0 {
+		t.Errorf("Flags.bit0 (FlagGzip) should still be set on the decoded v1 frame")
+	}
+}
+
+// TestUnmarshalVersionTooNew verifies that a frame with version > Version
+// returns ErrVersion (not ErrInvalidFrame).
+func TestUnmarshalVersionTooNew(t *testing.T) {
+	buf := []byte{}
+	buf = append(buf, Magic[:]...)
+	buf = appendU8(buf, Version+1) // future version
+	// fill the rest with zeros (will never reach body parsing)
+	buf = append(buf, make([]byte, 60)...)
+	crc := crc32.Checksum(buf[:len(buf)-4], crcTable)
+	// Overwrite last 4 bytes with correct CRC so CRC check passes first.
+	buf = append(buf[:len(buf)-4], 0, 0, 0, 0)
+	_ = crc
+	// The version check runs before body parsing; a minimal buf is enough.
+	// Just confirm ErrVersion is returned (CRC may also fail — either way
+	// ErrVersion must be in the error chain if the version byte is seen).
+	b, _ := Marshal(baseFrame())
+	b[4] = Version + 1 // patch version byte
+	// Recompute CRC so the version check is actually reached.
+	body := b[:len(b)-4]
+	newCRC := crc32.Checksum(body, crcTable)
+	b = append(body, 0, 0, 0, 0)
+	b[len(b)-4] = byte(newCRC)
+	b[len(b)-3] = byte(newCRC >> 8)
+	b[len(b)-2] = byte(newCRC >> 16)
+	b[len(b)-1] = byte(newCRC >> 24)
+
+	_, err := Unmarshal(b)
+	if !errors.Is(err, ErrVersion) {
+		t.Fatalf("version %d frame: want ErrVersion, got %v", Version+1, err)
 	}
 }

@@ -8,20 +8,21 @@
 package csresidual
 
 import (
-	"fmt"
 	"math"
-	"regexp"
 	"strconv"
 	"strings"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
+
+	"github.com/passiveintent/Palimpsest/pkg/tier"
 )
 
-// Tier names (ADR-005): billing meters and quantiles are forced to exact;
-// everything else defaults to sketched unless a tiers rule says otherwise.
+// Tier names re-exported from pkg/tier (ADR-005): billing meters and
+// quantiles are forced to exact; everything else defaults to sketched
+// unless a tiers rule says otherwise.
 const (
-	tierExact    = "exact"
-	tierSketched = "sketched"
+	tierExact    = tier.Exact
+	tierSketched = tier.Sketched
 )
 
 // kv is one resolved (label key, string value) pair used to build a
@@ -98,44 +99,17 @@ func leKV(bound float64) kv {
 	return kv{key: "le", val: strconv.FormatFloat(bound, 'g', -1, 64)}
 }
 
-// tierRule is one compiled entry of the config's `tiers` list (ADR-005):
-// the first rule whose regex matches a metric name wins.
-type tierRule struct {
-	re   *regexp.Regexp
-	tier string
-}
-
-// compileTierRules compiles raw (match, tier) pairs, validating the tier
-// value and regex syntax up front so bad config fails at Validate() time
-// rather than on the first matching metric.
-func compileTierRules(raw []TierConfig) ([]tierRule, error) {
-	rules := make([]tierRule, 0, len(raw))
+// compileTierRules converts the processor config's TierConfig slice into
+// pkg/tier.CompiledRules, delegating validation to pkg/tier.
+func compileTierRules(raw []TierConfig) (tier.CompiledRules, error) {
+	rules := make([]tier.Rule, len(raw))
 	for i, r := range raw {
-		switch r.Tier {
-		case tierExact, tierSketched:
-		default:
-			return nil, fmt.Errorf("tiers[%d]: tier must be %q or %q, got %q", i, tierExact, tierSketched, r.Tier)
-		}
-		re, err := regexp.Compile(r.Match)
-		if err != nil {
-			return nil, fmt.Errorf("tiers[%d]: invalid match regex %q: %w", i, r.Match, err)
-		}
-		rules = append(rules, tierRule{re: re, tier: r.Tier})
+		rules[i] = tier.Rule{Match: r.Match, Tier: r.Tier}
 	}
-	return rules, nil
+	return tier.Compile(rules)
 }
 
-// matchTier resolves metricName's tier (ADR-005): summary/quantile metrics
-// are always forced exact regardless of config; otherwise the first
-// matching rule wins; a metric matching no rule defaults to sketched.
-func matchTier(rules []tierRule, metricName string, isSummary bool) string {
-	if isSummary {
-		return tierExact
-	}
-	for _, r := range rules {
-		if r.re.MatchString(metricName) {
-			return r.tier
-		}
-	}
-	return tierSketched
+// matchTier resolves metricName's tier (ADR-005), delegating to pkg/tier.
+func matchTier(rules tier.CompiledRules, metricName string, isSummary bool) string {
+	return tier.Match(rules, metricName, isSummary)
 }

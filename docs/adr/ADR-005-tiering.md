@@ -13,9 +13,8 @@ exact tier; counters/gauges/histogram-buckets are sketchable.
 
 ## Consequences
 
-* Tier routing logic is not yet implemented. The former `pkg/tier` stub
-  package has been removed (it was doc.go only). Tier selection currently
-  lives implicitly in the processor config
-  (`otel/processor/csresidual/processor.go`). When implementing, create
-  `pkg/tier` fresh and wire it through the hexagonal port
-  (see ADR-007).
+* `pkg/tier` is the canonical, zero-dependency implementation of tier
+  selection (regex list, first-match-wins, three values: `exact`, `sketched`,
+  `merged`). The `otel/processor/csresidual` processor imports it via the
+  `compileTierRules` / `matchTier` shim in `identity.go`; nothing else needs
+  to re-implement the logic.

@@ -101,7 +101,7 @@ func TestConfigValidate_Fields(t *testing.T) {
 			c.Pull = PullConfig{Enabled: true, Addr: ":8889", MTLS: true, BearerTokenEnv: "CSRESIDUAL_TEST_DOES_NOT_EXIST", TLSCertFile: "a", TLSKeyFile: "b", TLSClientCAFile: "c"}
 		}, "empty/unset environment variable"},
 		{"tier invalid regex", func(c *Config) { c.Tiers = []TierConfig{{Match: "(", Tier: tierExact}} }, "invalid match regex"},
-		{"tier invalid value", func(c *Config) { c.Tiers = []TierConfig{{Match: ".*", Tier: "maybe"}} }, `tier must be "exact" or "sketched"`},
+		{"tier invalid value", func(c *Config) { c.Tiers = []TierConfig{{Match: ".*", Tier: "maybe"}} }, `tier must be "exact"`},
 		{"view missing name", func(c *Config) { c.Views = []ViewConfig{{Labels: []string{"a"}}} }, "views[0]: name is required"},
 		{"view missing labels", func(c *Config) { c.Views = []ViewConfig{{Name: "v1"}} }, "views[0]: labels must declare"},
 		{"view duplicate name", func(c *Config) {

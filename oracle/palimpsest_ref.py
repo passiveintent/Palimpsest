@@ -40,7 +40,8 @@ PHI_MIX = 0x9E3779B97F4A7C15
 TEST_TENANT_KEY = b"test-vector-key"
 
 MAGIC = b"PLMP"
-VERSION = 1
+VERSION = 2
+VERSION_MIN = 1
 
 FRAME_TYPE_KEYFRAME = 1
 FRAME_TYPE_RESIDUAL = 2
@@ -410,7 +411,11 @@ class Frame:
     m: int = 0
     d: int = 0
     predictor: int = PREDICTOR_HOLD
-    reserved: int = 0
+    # key_version identifies the HKDF tenant_key generation (ADR-012 §Addendum).
+    # v2 field; v1 frames imply key_version=0 on decode.
+    key_version: int = 0
+    # codec: 0=none, 1=gzip, 2=zstd(reserved). Replaces flags.bit0 in v2.
+    codec: int = 0
     energy: float = 0.0
     quant_scale: float = 0.0
     dict_root: int = 0
@@ -424,7 +429,8 @@ def marshal_frame(f: Frame) -> bytes:
     buf += MAGIC
     buf += struct.pack("<BBBB", f.version, f.frame_type, f.flags, f.bits)
     buf += struct.pack("<QQQI", f.emitter_id, f.shard_id, f.epoch, f.seq)
-    buf += struct.pack("<HIBBB", f.view_id, f.m, f.d, f.predictor, f.reserved)
+    # v2: predictor | key_version | codec  (v1 had: predictor | reserved)
+    buf += struct.pack("<HIBBBB", f.view_id, f.m, f.d, f.predictor, f.key_version, f.codec)
     buf += struct.pack("<ffQ", f32(f.energy), f32(f.quant_scale), f.dict_root)
 
     buf += struct.pack("<I", len(f.dict_deltas))

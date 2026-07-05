@@ -24,7 +24,7 @@ func Marshal(f *Frame) ([]byte, error) {
 		return nil, fmt.Errorf("%w: bad magic %x", ErrInvalidFrame, f.Magic)
 	}
 	if f.Version != Version {
-		return nil, fmt.Errorf("%w: unsupported version %d", ErrInvalidFrame, f.Version)
+		return nil, fmt.Errorf("%w: Marshal requires version %d, got %d", ErrInvalidFrame, Version, f.Version)
 	}
 	for i, dd := range f.DictDeltas {
 		if dd.IsTombstone() && (dd.InitValue != 0 || len(dd.Name) != 0) {
@@ -58,7 +58,8 @@ func Marshal(f *Frame) ([]byte, error) {
 	buf = appendU32(buf, f.M)
 	buf = appendU8(buf, f.D)
 	buf = appendU8(buf, f.Predictor)
-	buf = appendU8(buf, f.Reserved)
+	buf = appendU8(buf, f.KeyVersion)
+	buf = appendU8(buf, f.Codec)
 	buf = appendF32(buf, f.Energy)
 	buf = appendF32(buf, f.QuantScale)
 	buf = appendU64(buf, f.DictRoot)
@@ -112,7 +113,10 @@ func Unmarshal(b []byte) (*Frame, error) {
 	if f.Version, err = r.u8(); err != nil {
 		return nil, err
 	}
-	if f.Version != Version {
+	if f.Version < VersionMin || f.Version > Version {
+		if f.Version > Version {
+			return nil, fmt.Errorf("%w: got %d, max supported %d", ErrVersion, f.Version, Version)
+		}
 		return nil, fmt.Errorf("%w: unsupported version %d", ErrInvalidFrame, f.Version)
 	}
 	if f.FrameType, err = r.u8(); err != nil {
@@ -148,8 +152,26 @@ func Unmarshal(b []byte) (*Frame, error) {
 	if f.Predictor, err = r.u8(); err != nil {
 		return nil, err
 	}
-	if f.Reserved, err = r.u8(); err != nil {
-		return nil, err
+	// v2 adds key_version and codec where v1 had a single reserved byte.
+	if f.Version == 1 {
+		// Consume the v1 reserved byte; derive key_version=0 and codec from
+		// flags.bit0 (FlagGzip) per SPEC.md §"Version compatibility".
+		if _, err = r.u8(); err != nil {
+			return nil, err
+		}
+		f.KeyVersion = 0
+		if f.Flags&FlagGzip != 0 {
+			f.Codec = CodecGzip
+		} else {
+			f.Codec = CodecNone
+		}
+	} else {
+		if f.KeyVersion, err = r.u8(); err != nil {
+			return nil, err
+		}
+		if f.Codec, err = r.u8(); err != nil {
+			return nil, err
+		}
 	}
 	if f.Energy, err = r.f32(); err != nil {
 		return nil, err

@@ -89,6 +89,7 @@ type Metrics struct {
 	clockSkewMs            *labeled // key: emitter -> latest skew (gauge)
 	lateFramesDropped      int64
 	duplicateFramesDropped int64
+	keyringMiss            int64 // frames gated because key_version not in KeyRing (ADR-012)
 
 	scalarMu    sync.Mutex // guards the plain int64 scalar fields above
 	publishOnce sync.Once
@@ -218,6 +219,15 @@ func (m *Metrics) DuplicateFramesDropped() int64 {
 	return m.getInt64(&m.duplicateFramesDropped)
 }
 
+// IncKeyringMiss records a frame gated because its key_version was not
+// found in the decoder's KeyRing (ADR-012 §Addendum). Frames are never
+// silently dropped on a miss — they are held at low confidence and counted
+// here.
+func (m *Metrics) IncKeyringMiss() { m.addInt64(&m.keyringMiss, 1) }
+func (m *Metrics) KeyringMisses() int64 {
+	return m.getInt64(&m.keyringMiss)
+}
+
 // Publish registers m's counters under expvar at the given top-level name
 // (e.g. "palimpsest"). Safe to call more than once; only the first call
 // takes effect, matching expvar.Publish's "panics if name already
@@ -246,6 +256,7 @@ func (m *Metrics) Snapshot() map[string]any {
 		"clock_skew_ms":            m.clockSkewMs.snapshot(),
 		"late_frames_dropped":      m.LateFramesDropped(),
 		"duplicate_frames_dropped": m.DuplicateFramesDropped(),
+		"keyring_miss":             m.KeyringMisses(),
 	}
 }
 

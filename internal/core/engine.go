@@ -36,6 +36,13 @@ type Config struct {
 	// derived seeds (and therefore Phi) will silently disagree.
 	TenantKey []byte
 
+	// KeyRing is the versioned tenant-key set for ADR-012 key rotation
+	// (§Addendum). When non-nil, seed derivation uses the key whose version
+	// matches a frame's KeyVersion field. A nil KeyRing falls back to
+	// TenantKey (single-key mode). An unknown KeyVersion gates the frame
+	// and increments the keyring_miss metric; it is never silently dropped.
+	KeyRing sketch.KeyRing
+
 	// MaxResidual gates substrate (a): a recover.Result whose Residual
 	// exceeds this is untrustworthy and is gated (no deviation events
 	// emitted; the owning view is marked DEGRADED) rather than surfaced.
@@ -132,11 +139,15 @@ func New(cfg Config, anomalySink ports.AnomalySink, seriesSink ports.SeriesSink,
 	}
 }
 
-// viewKey identifies one (epoch, view) recovery coordinate system within a
-// shard.
+// viewKey identifies one (epoch, view, key-version) recovery coordinate
+// system within a shard. Frames with different key_version values for the
+// same (epoch, view) derive different seeds and therefore map to separate
+// ViewStates; this ensures additivity is never violated across key versions
+// (ADR-012 §Addendum).
 type viewKey struct {
-	epoch uint64
-	view  uint16
+	epoch      uint64
+	view       uint16
+	keyVersion uint8
 }
 
 // ShardState is one shard's complete decode-path state: every emitter
@@ -265,7 +276,18 @@ func (e *Engine) HandleFrame(ctx context.Context, f *wire.Frame) {
 	}
 
 	evs := em.getOrCreateEmitterView(f.ViewID)
-	view := shard.getOrCreateView(e.cfg, f.Epoch, f.ViewID)
+
+	// Resolve the tenant key for this frame's key_version. Gate and count
+	// unknown versions rather than silently corrupting recovery (ADR-012
+	// §Addendum: "unknown version -> frame gated low-confidence +
+	// keyring_miss metric; never silent drop").
+	tenantKey, keyOK := e.resolveTenantKey(f)
+	if !keyOK {
+		e.metrics.IncKeyringMiss()
+		return
+	}
+
+	view := shard.getOrCreateView(e.cfg, f.Epoch, f.ViewID, f.KeyVersion, tenantKey)
 
 	e.trackClockSkew(shard, em, view, f, now)
 
@@ -637,11 +659,11 @@ func (em *EmitterState) getOrCreateEmitterView(viewID uint16) *emitterViewState 
 	return v
 }
 
-func (s *ShardState) getOrCreateView(cfg Config, epoch uint64, viewID uint16) *ViewState {
-	key := viewKey{epoch: epoch, view: viewID}
+func (s *ShardState) getOrCreateView(cfg Config, epoch uint64, viewID uint16, keyVersion uint8, tenantKey []byte) *ViewState {
+	key := viewKey{epoch: epoch, view: viewID, keyVersion: keyVersion}
 	v, ok := s.Views[key]
 	if !ok {
-		seed := sketch.DeriveEphemeralSeed(cfg.TenantKey, s.ShardID, uint32(epoch), viewID)
+		seed := sketch.DeriveEphemeralSeed(tenantKey, s.ShardID, uint32(epoch), viewID)
 		v = &ViewState{
 			Epoch:                 epoch,
 			ViewID:                viewID,
@@ -679,4 +701,16 @@ func frameTypeLabel(t uint8) string {
 	default:
 		return "unknown"
 	}
+}
+
+// resolveTenantKey returns the HKDF key material that must be used to derive
+// the seed for f's (shard, epoch, view) coordinate system.
+// When KeyRing is nil, TenantKey is used (single-key mode).
+// When KeyRing is set, it looks up f.KeyVersion; if missing, it returns
+// ("", false) so HandleFrame can gate the frame and increment keyring_miss.
+func (e *Engine) resolveTenantKey(f *wire.Frame) ([]byte, bool) {
+	if e.cfg.KeyRing != nil {
+		return e.cfg.KeyRing.Lookup(f.KeyVersion)
+	}
+	return e.cfg.TenantKey, true
 }

@@ -39,8 +39,17 @@ var ErrCRCMismatch = errors.New("wire: crc32c mismatch")
 // Magic identifies a Palimpsest wire frame ("PLMP").
 var Magic = [4]byte{'P', 'L', 'M', 'P'}
 
-// Version is the only wire format version this package understands.
-const Version uint8 = 1
+// Version is the wire format version this package writes (docs/SPEC.md v2).
+const Version uint8 = 2
+
+// VersionMin is the oldest wire format version this package can decode.
+// Versions 1 and 2 are both valid; versions above Version return ErrVersion.
+const VersionMin uint8 = 1
+
+// ErrVersion indicates a wire frame whose version byte exceeds Version.
+// It is a distinct sentinel from ErrInvalidFrame so callers can distinguish
+// "future format we don't understand" from "malformed frame".
+var ErrVersion = errors.New("wire: unsupported version")
 
 // Frame types (docs/SPEC.md "Frame Layout").
 const (
@@ -61,11 +70,23 @@ const PredictorHold PredictorID = 0
 
 // Frame-level flag bits.
 const (
-	// FlagGzip marks the snapshot blob as gzip-compressed.
+	// FlagGzip marks the snapshot blob as gzip-compressed (v1 frames only).
+	// Deprecated in v2 in favour of the Codec field; kept for v1 decode.
 	FlagGzip uint8 = 1 << 0
 	// FlagKDelta marks a KEYFRAME payload as delta-coded against the
 	// prior keyframe (ADR-011), rather than a Full encoding.
 	FlagKDelta uint8 = 1 << 1
+)
+
+// Codec values for Frame.Codec (v2 and later; docs/SPEC.md).
+const (
+	// CodecNone means no compression is applied to the snapshot blob.
+	CodecNone uint8 = 0
+	// CodecGzip means the snapshot blob is gzip-compressed.
+	// Mirrors the deprecated FlagGzip for v1 decode compatibility.
+	CodecGzip uint8 = 1
+	// CodecZstd is reserved; implementation is deferred.
+	CodecZstd uint8 = 2
 )
 
 // DictDelta flag bits (ADR-008).
@@ -95,7 +116,14 @@ type Frame struct {
 	M         uint32
 	D         uint8
 	Predictor uint8
-	Reserved  uint8
+	// KeyVersion identifies the HKDF tenant_key generation used for seed
+	// derivation (ADR-012 §Addendum). Introduced in wire v2; v1 frames
+	// imply KeyVersion=0 on decode.
+	KeyVersion uint8
+	// Codec identifies the compression applied to the snapshot blob (v2+).
+	// 0=none, 1=gzip, 2=zstd (reserved). Replaces flags.bit0 (FlagGzip)
+	// from v1; v1 frames derive Codec from FlagGzip on decode.
+	Codec uint8
 
 	Energy     float32
 	QuantScale float32

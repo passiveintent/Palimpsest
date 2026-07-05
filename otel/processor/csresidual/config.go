@@ -21,6 +21,13 @@ import (
 
 var _ confmap.Validator = (*Config)(nil)
 
+// TenantKeyEntry is one entry in the tenant_keys list for key rotation
+// (ADR-012 §Addendum). Version must be unique across entries in a Config.
+type TenantKeyEntry struct {
+	Version uint8  `mapstructure:"version"`
+	EnvVar  string `mapstructure:"env_var"`
+}
+
 // ViewConfig declares one sketch-cube view (ADR-010): an independent
 // (identity, dictionary, accumulator) slicing of the same incoming
 // metrics, tagged on the wire by its index in Config.Views (Frame.ViewID).
@@ -89,13 +96,21 @@ type OutputConfig struct {
 // full annotated YAML and the package doc for which ADR each field
 // implements.
 type Config struct {
-	TenantID     string       `mapstructure:"tenant_id"`
-	TenantKeyEnv string       `mapstructure:"tenant_key_env"`
-	ShardBy      []string     `mapstructure:"shard_by"`
-	LogicalKey   []string     `mapstructure:"logical_key"`
-	InstanceKey  []string     `mapstructure:"instance_key"`
-	Aggregates   []string     `mapstructure:"aggregates"`
-	Views        []ViewConfig `mapstructure:"views"`
+	TenantID     string `mapstructure:"tenant_id"`
+	TenantKeyEnv string `mapstructure:"tenant_key_env"`
+	// TenantKeys is the ordered list of tenant key versions for key rotation
+	// (ADR-012 §Addendum). When non-empty, replaces TenantKeyEnv.
+	// The key material for each version is read from the named env var.
+	TenantKeys []TenantKeyEntry `mapstructure:"tenant_keys"`
+	// ActiveKeyVersion is the key_version stamped on newly encoded frames.
+	// Must match a version present in TenantKeys when TenantKeys is set.
+	// Ignored in single-key mode (TenantKeyEnv only).
+	ActiveKeyVersion uint8        `mapstructure:"active_key_version"`
+	ShardBy          []string     `mapstructure:"shard_by"`
+	LogicalKey       []string     `mapstructure:"logical_key"`
+	InstanceKey      []string     `mapstructure:"instance_key"`
+	Aggregates       []string     `mapstructure:"aggregates"`
+	Views            []ViewConfig `mapstructure:"views"`
 
 	M    int `mapstructure:"m"`
 	D    int `mapstructure:"d"`
@@ -175,10 +190,33 @@ func (cfg *Config) Validate() error {
 	if cfg.TenantID == "" {
 		errs = append(errs, errors.New("tenant_id is required (ADR-012)"))
 	}
-	if cfg.TenantKeyEnv == "" {
-		errs = append(errs, errors.New("tenant_key_env is required (ADR-012)"))
-	} else if os.Getenv(cfg.TenantKeyEnv) == "" {
-		errs = append(errs, fmt.Errorf("tenant_key_env %q names an empty/unset environment variable", cfg.TenantKeyEnv))
+	// tenant key: either multi-key rotation list or single env-var.
+	if len(cfg.TenantKeys) > 0 {
+		seenKV := make(map[uint8]bool, len(cfg.TenantKeys))
+		activeFound := false
+		for i, e := range cfg.TenantKeys {
+			if e.EnvVar == "" {
+				errs = append(errs, fmt.Errorf("tenant_keys[%d]: env_var is required", i))
+			} else if os.Getenv(e.EnvVar) == "" {
+				errs = append(errs, fmt.Errorf("tenant_keys[%d] version=%d: env var %q is empty or unset", i, e.Version, e.EnvVar))
+			}
+			if seenKV[e.Version] {
+				errs = append(errs, fmt.Errorf("tenant_keys: duplicate version %d", e.Version))
+			}
+			seenKV[e.Version] = true
+			if e.Version == cfg.ActiveKeyVersion {
+				activeFound = true
+			}
+		}
+		if !activeFound {
+			errs = append(errs, fmt.Errorf("active_key_version %d is not present in tenant_keys", cfg.ActiveKeyVersion))
+		}
+	} else {
+		if cfg.TenantKeyEnv == "" {
+			errs = append(errs, errors.New("tenant_key_env is required (ADR-012)"))
+		} else if os.Getenv(cfg.TenantKeyEnv) == "" {
+			errs = append(errs, fmt.Errorf("tenant_key_env %q names an empty/unset environment variable", cfg.TenantKeyEnv))
+		}
 	}
 	if len(cfg.LogicalKey) == 0 {
 		errs = append(errs, errors.New("logical_key must declare at least one label (ADR-008)"))

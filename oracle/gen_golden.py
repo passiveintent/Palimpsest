@@ -348,7 +348,8 @@ def build_frame_residual() -> ref.Frame:
         m=m,
         d=4,
         predictor=ref.PREDICTOR_HOLD,
-        reserved=0,
+        key_version=0,
+        codec=0,
         energy=1.25,
         quant_scale=quant_scale,
         dict_root=dict_root,
@@ -534,12 +535,12 @@ def gen_recovery_watermark() -> dict:
 # --------------------------------------------------------------------------
 
 
-def _canon(obj: object, ndigits: int = 10) -> object:
+def _canon(obj: object, ndigits: int = 9) -> object:
     """Recursively round every float to *ndigits* decimal places.
 
     FISTA runs 350 iterations of matrix algebra whose low-order bits differ
     across BLAS backends (Windows/AVX2 vs Linux/OpenBLAS vs macOS/Accelerate).
-    Rounding to 1e-10 is far above the numerical noise (~1e-12) while still
+    Rounding to 1e-9 is far above the numerical noise (~1e-12) while still
     well below the Go tolerance tests' 1e-4 threshold, so it produces stable
     JSON on every machine without changing any answer that matters.
     """
@@ -554,13 +555,106 @@ def _canon(obj: object, ndigits: int = 10) -> object:
 
 def write_json(path: Path, obj: dict) -> None:
     with path.open("w", encoding="utf-8", newline="\n") as f:
-        json.dump(obj, f, indent=2, sort_keys=False)
+        json.dump(obj, f, indent=2, sort_keys=True)
         f.write("\n")
 
 
 def write_recovery_json(path: Path, obj: dict) -> None:
-    """Like write_json but canonicalises floats first (BLAS-determinism fix)."""
+    """Like write_json but canonicalises floats first (BLAS-determinism fix).
+
+    Recovery vectors (recovery_case1.json, recovery_watermark.json) are the
+    only files whose floats can differ across BLAS backends; _canon rounds
+    them to 1e-9 before serialisation to produce stable JSON.
+    """
     write_json(path, _canon(obj))
+
+
+# --------------------------------------------------------------------------
+# key_rotation_vectors.json   (wire v2, ADR-012 §Addendum)
+# --------------------------------------------------------------------------
+
+# Two distinct tenant keys used for the rotation test: v0 is the "before"
+# key, v1 is the "after" key (active post-rotation).
+KEY_V0 = b"rotation-test-key-v0"
+KEY_V1 = b"rotation-test-key-v1"
+
+
+def gen_key_rotation_vectors() -> dict:
+    """Two residual frames for the same (shard, epoch, view, window), encoded
+    under key_version 0 and key_version 1 respectively.
+
+    The acceptance property (Go E2E test): the decoder holds both keys in its
+    KeyRing; frames under either version are routed to their own ViewState,
+    each independently recoverable; no keyring_miss is incremented for either.
+    """
+    shard_id = 42
+    epoch_idx = 7
+    view_id = 0
+    seq = 3
+    m = 16
+    d = 4
+    bits = 8
+
+    # Build two tiny sketches — one per key version.  We inject the same
+    # series into both so both views carry the same signal and recovery works.
+    name = b"rotation_metric|shard=42|agg=sum"
+    signal_value = 5.0
+    inv_sqrt_d = 1.0 / math.sqrt(d)
+
+    frames = []
+    for kv, tenant_key in [(0, KEY_V0), (1, KEY_V1)]:
+        seed = ref.derive_ephemeral_seed(tenant_key, shard_id, epoch_idx, view_id)
+        idx, sign = ref.buckets(name, seed, m, d)
+        y = [0.0] * m
+        for i, bucket in enumerate(idx):
+            y[bucket] += sign[i] * signal_value * inv_sqrt_d
+        scale = max(abs(v) for v in y) / 127.0 if any(y) else 1e-6
+        payload = ref.quantize(y, bits, scale)
+
+        frame = ref.Frame(
+            version=ref.VERSION,
+            frame_type=ref.FRAME_TYPE_RESIDUAL,
+            flags=0,
+            bits=bits,
+            emitter_id=0xABCD0000 | kv,
+            shard_id=shard_id,
+            epoch=epoch_idx,
+            seq=seq,
+            view_id=view_id,
+            m=m,
+            d=d,
+            predictor=ref.PREDICTOR_HOLD,
+            key_version=kv,
+            codec=0,
+            energy=float(np.dot(y, y) ** 0.5),
+            quant_scale=scale,
+            dict_root=ref.compute_dict_root([ref.series_id(name)]),
+            dict_deltas=[],
+            snapshot_blob=b"",
+            payload=payload,
+        )
+        frames.append({
+            "key_version": kv,
+            "tenant_key": tenant_key.decode(),
+            "seed": seed,
+            "frame_hex": hex_bytes(ref.marshal_frame(frame)),
+            "y": y,
+            "quant_scale": scale,
+        })
+
+    return {
+        "description": "two frames same window encoded under key_version 0 and 1; decoder KeyRing holds both",
+        "shard_id": shard_id,
+        "epoch_idx": epoch_idx,
+        "view_id": view_id,
+        "seq": seq,
+        "m": m,
+        "d": d,
+        "bits": bits,
+        "series_name": name.decode(),
+        "series_id": ref.series_id(name),
+        "frames": frames,
+    }
 
 
 def main(argv: list[str]) -> int:
@@ -577,6 +671,7 @@ def main(argv: list[str]) -> int:
         ("dictroot_vectors.json", gen_dictroot_vectors),
         ("kdelta_sequence.json", gen_kdelta_sequence),
         ("quant_vectors.json", gen_quant_vectors),
+        ("key_rotation_vectors.json", gen_key_rotation_vectors),
     ]
     for filename, fn in steps:
         print(f"generating {filename} ...", file=sys.stderr)

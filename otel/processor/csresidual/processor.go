@@ -27,6 +27,7 @@ import (
 
 	"github.com/passiveintent/Palimpsest/pkg/predict"
 	"github.com/passiveintent/Palimpsest/pkg/sketch"
+	"github.com/passiveintent/Palimpsest/pkg/tier"
 	"github.com/passiveintent/Palimpsest/pkg/wire"
 )
 
@@ -118,11 +119,17 @@ type metricsProcessor struct {
 	cfg    *Config
 	logger *zap.Logger
 
-	tenantKey   []byte
-	emitterID   uint64
-	views       []viewSpec
-	tierRules   []tierRule
-	goldenEvery int
+	tenantKey []byte
+	// keyRing is non-nil when tenant_keys rotation is configured (ADR-012
+	// §Addendum). When set, deriveSeed uses the key for each frame's
+	// key_version rather than the single tenantKey.
+	keyRing sketch.KeyRing
+	// activeKeyVersion is stamped on every newly-encoded frame (wire v2).
+	activeKeyVersion uint8
+	emitterID        uint64
+	views            []viewSpec
+	tierRules        tier.CompiledRules
+	goldenEvery      int
 
 	sink frameSink
 
@@ -153,10 +160,28 @@ type metricsProcessor struct {
 // newMetricsProcessor builds a metricsProcessor from cfg. sink may be nil,
 // in which case a fileFrameSink rooted at cfg.Output.Dir is used.
 func newMetricsProcessor(cfg *Config, logger *zap.Logger, sink frameSink) (*metricsProcessor, error) {
-	tenantKey, err := loadTenantKey(cfg.TenantKeyEnv)
-	if err != nil {
-		return nil, err
+	var tenantKey []byte
+	var keyRing sketch.KeyRing
+	var activeKeyVersion uint8
+
+	if len(cfg.TenantKeys) > 0 {
+		// Multi-key rotation mode (ADR-012 §Addendum).
+		ring, err := loadKeyRing(cfg.TenantKeys)
+		if err != nil {
+			return nil, err
+		}
+		keyRing = ring
+		activeKeyVersion = cfg.ActiveKeyVersion
+		// tenantKey for newPipeline uses the active version's key.
+		tenantKey = ring[activeKeyVersion]
+	} else {
+		k, err := loadTenantKey(cfg.TenantKeyEnv)
+		if err != nil {
+			return nil, err
+		}
+		tenantKey = k
 	}
+
 	tierRules, err := compileTierRules(cfg.Tiers)
 	if err != nil {
 		return nil, err
@@ -169,16 +194,18 @@ func newMetricsProcessor(cfg *Config, logger *zap.Logger, sink frameSink) (*metr
 		sink = &fileFrameSink{dir: cfg.Output.Dir}
 	}
 	return &metricsProcessor{
-		cfg:         cfg,
-		logger:      logger,
-		tenantKey:   tenantKey,
-		emitterID:   randomEmitterID(),
-		views:       resolveViews(cfg),
-		tierRules:   tierRules,
-		goldenEvery: goldenEvery,
-		sink:        sink,
-		pipelines:   make(map[pipelineKey]*pipeline),
-		now:         time.Now,
+		cfg:              cfg,
+		logger:           logger,
+		tenantKey:        tenantKey,
+		keyRing:          keyRing,
+		activeKeyVersion: activeKeyVersion,
+		emitterID:        randomEmitterID(),
+		views:            resolveViews(cfg),
+		tierRules:        tierRules,
+		goldenEvery:      goldenEvery,
+		sink:             sink,
+		pipelines:        make(map[pipelineKey]*pipeline),
+		now:              time.Now,
 	}, nil
 }
 
@@ -461,7 +488,7 @@ func (p *metricsProcessor) newPipeline(shardID uint64, v viewSpec, now time.Time
 // represented by emitted frames instead of flowing through the rest of
 // the OTel pipeline. Exact-tier metrics (and, for shadow mode, all of it)
 // are left untouched by the caller.
-func removeSketchedDatapoints(md pmetric.Metrics, rules []tierRule) {
+func removeSketchedDatapoints(md pmetric.Metrics, rules tier.CompiledRules) {
 	rms := md.ResourceMetrics()
 	rms.RemoveIf(func(rm pmetric.ResourceMetrics) bool {
 		sms := rm.ScopeMetrics()
@@ -565,6 +592,7 @@ func (p *metricsProcessor) flushPipeline(pl *pipeline, now time.Time) {
 	f.Predictor = uint8(pl.pred.ID())
 	f.Bits = uint8(p.cfg.Bits)
 	f.Energy = float32(energy)
+	f.KeyVersion = p.activeKeyVersion // ADR-012 §Addendum: stamp the active key version
 
 	keyframeWindow := pl.seq%uint32(p.cfg.KeyframeEvery) == 0
 	switch {
@@ -583,7 +611,8 @@ func (p *metricsProcessor) flushPipeline(pl *pipeline, now time.Time) {
 			p.logger.Error("csresidual: EncodeSnapshot", zap.Error(err))
 		} else {
 			f.SnapshotBlob = blob
-			f.Flags |= wire.FlagGzip
+			// v2: use the Codec field rather than the deprecated FlagGzip bit.
+			f.Codec = wire.CodecGzip
 		}
 	}
 

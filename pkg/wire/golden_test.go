@@ -40,6 +40,7 @@ func TestGoldenVectors(t *testing.T) {
 	t.Run("quant", testGoldenQuant)
 	t.Run("kdelta", testGoldenKDelta)
 	t.Run("frame", testGoldenFrame)
+	t.Run("key_rotation", testGoldenKeyRotation)
 }
 
 type goldenDictRootCase struct {
@@ -250,7 +251,8 @@ func testGoldenFrame(t *testing.T) {
 		M:          m,
 		D:          4,
 		Predictor:  uint8(wire.PredictorHold),
-		Reserved:   0,
+		KeyVersion: 0,
+		Codec:      wire.CodecNone,
 		Energy:     1.25,
 		QuantScale: 0.25,
 		DictRoot:   dictRoot,
@@ -296,5 +298,73 @@ func loadGoldenJSON(t *testing.T, filename string, v interface{}) {
 	}
 	if err := json.Unmarshal(data, v); err != nil {
 		t.Fatalf("parsing %s: %v", path, err)
+	}
+}
+
+// goldenKeyRotationFrame is one entry in key_rotation_vectors.json.
+type goldenKeyRotationFrame struct {
+	KeyVersion uint8     `json:"key_version"`
+	TenantKey  string    `json:"tenant_key"`
+	Seed       uint64    `json:"seed"`
+	FrameHex   string    `json:"frame_hex"`
+	Y          []float64 `json:"y"`
+	QuantScale float32   `json:"quant_scale"`
+}
+
+type keyRotationVectorsFile struct {
+	ShardID    uint64                   `json:"shard_id"`
+	EpochIdx   uint32                   `json:"epoch_idx"`
+	ViewID     uint16                   `json:"view_id"`
+	Seq        uint32                   `json:"seq"`
+	M          uint32                   `json:"m"`
+	D          uint8                    `json:"d"`
+	Bits       uint8                    `json:"bits"`
+	SeriesName string                   `json:"series_name"`
+	SeriesID   uint64                   `json:"series_id"`
+	Frames     []goldenKeyRotationFrame `json:"frames"`
+}
+
+// testGoldenKeyRotation verifies that a key_rotation_vectors.json entry
+// round-trips correctly: each frame must Unmarshal with its declared
+// key_version preserved, and the re-marshaled bytes must be byte-identical
+// to the oracle's bytes.
+func testGoldenKeyRotation(t *testing.T) {
+	var kv keyRotationVectorsFile
+	loadGoldenJSON(t, "key_rotation_vectors.json", &kv)
+	if len(kv.Frames) != 2 {
+		t.Fatalf("key_rotation_vectors.json: want 2 frames (key_version 0 and 1), got %d", len(kv.Frames))
+	}
+
+	for _, entry := range kv.Frames {
+		wantBytes, err := hex.DecodeString(entry.FrameHex)
+		if err != nil {
+			t.Fatalf("key_version %d: bad frame_hex: %v", entry.KeyVersion, err)
+		}
+
+		f, err := wire.Unmarshal(wantBytes)
+		if err != nil {
+			t.Fatalf("key_version %d: Unmarshal: %v", entry.KeyVersion, err)
+		}
+		if f.Version != wire.Version {
+			t.Errorf("key_version %d: frame.Version = %d, want %d", entry.KeyVersion, f.Version, wire.Version)
+		}
+		if f.KeyVersion != entry.KeyVersion {
+			t.Errorf("key_version %d: frame.KeyVersion = %d, want %d", entry.KeyVersion, f.KeyVersion, entry.KeyVersion)
+		}
+
+		// Verify seed matches oracle's derive_ephemeral_seed.
+		gotSeed := sketch.DeriveEphemeralSeed([]byte(entry.TenantKey), kv.ShardID, kv.EpochIdx, kv.ViewID)
+		if gotSeed != entry.Seed {
+			t.Errorf("key_version %d: DeriveEphemeralSeed = %d, want %d", entry.KeyVersion, gotSeed, entry.Seed)
+		}
+
+		// Re-marshal must be byte-identical.
+		gotBytes, err := wire.Marshal(f)
+		if err != nil {
+			t.Fatalf("key_version %d: re-Marshal: %v", entry.KeyVersion, err)
+		}
+		if !bytes.Equal(gotBytes, wantBytes) {
+			t.Errorf("key_version %d: re-Marshal bytes differ\ngot:  %x\nwant: %x", entry.KeyVersion, gotBytes, wantBytes)
+		}
 	}
 }

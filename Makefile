@@ -26,4 +26,8 @@ lint:
 	fi
 
 golden:
+	# hash/hkdf/dictroot/kdelta/quant/frame_residual.bin: BYTE-EXACT vs oracle.
+	# recovery_case1.json / recovery_watermark.json: TOLERANCE-compared in Go
+	# (BLAS backends differ in low-order bits; _canon rounds to 1e-9 for
+	# stability — see docs/adr/ADR-001).
 	cd oracle && python3 gen_golden.py --out ../testdata/golden

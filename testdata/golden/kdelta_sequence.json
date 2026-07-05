@@ -2,59 +2,58 @@
   "scale": 0.1,
   "steps": [
     {
-      "step": 0,
-      "golden": true,
-      "flags_kdelta": false,
       "births": [
         {
           "id": 13716017466272225171,
-          "name": "cpu_usage|region=us-east,cluster=prod|agg=sum",
-          "init_value": 10.0
+          "init_value": 10.0,
+          "name": "cpu_usage|region=us-east,cluster=prod|agg=sum"
         },
         {
           "id": 3327097841107003917,
-          "name": "cpu_usage|region=us-west,cluster=prod|agg=sum",
-          "init_value": 20.0
+          "init_value": 20.0,
+          "name": "cpu_usage|region=us-west,cluster=prod|agg=sum"
         },
         {
           "id": 14337050298409450808,
-          "name": "mem_usage|region=us-east,cluster=prod|agg=sum",
-          "init_value": 30.0
+          "init_value": 30.0,
+          "name": "mem_usage|region=us-east,cluster=prod|agg=sum"
         },
         {
           "id": 11700781113966624968,
-          "name": "mem_usage|region=us-west,cluster=prod|agg=sum",
-          "init_value": 40.0
+          "init_value": 40.0,
+          "name": "mem_usage|region=us-west,cluster=prod|agg=sum"
         }
       ],
-      "tombstones": [],
+      "dict_root": 7085498541400921027,
+      "flags_kdelta": false,
+      "golden": true,
       "ids": [
         3327097841107003917,
         11700781113966624968,
         13716017466272225171,
         14337050298409450808
       ],
+      "payload_hex": "040000000dea26d8db392c2e0000a041c88094046e8661a2000020429397350a371559be00002041387d9a13496ff7c60000f041",
+      "step": 0,
+      "tombstones": [],
       "values": {
+        "11700781113966624968": 40.0,
         "13716017466272225171": 10.0,
-        "3327097841107003917": 20.0,
         "14337050298409450808": 30.0,
-        "11700781113966624968": 40.0
-      },
-      "dict_root": 7085498541400921027,
-      "payload_hex": "040000000dea26d8db392c2e0000a041c88094046e8661a2000020429397350a371559be00002041387d9a13496ff7c60000f041"
+        "3327097841107003917": 20.0
+      }
     },
     {
-      "step": 1,
-      "golden": false,
-      "flags_kdelta": true,
       "births": [
         {
           "id": 14197310116720301820,
-          "name": "disk_io|region=us-east,cluster=prod|agg=sum",
-          "init_value": 50.0
+          "init_value": 50.0,
+          "name": "disk_io|region=us-east,cluster=prod|agg=sum"
         }
       ],
-      "tombstones": [],
+      "dict_root": 7114231151271096678,
+      "flags_kdelta": true,
+      "golden": false,
       "ids": [
         3327097841107003917,
         11700781113966624968,
@@ -62,22 +61,22 @@
         14197310116720301820,
         14337050298409450808
       ],
+      "payload_hex": "0c14e807",
+      "step": 1,
+      "tombstones": [],
       "values": {
+        "11700781113966624968": 40.0,
         "13716017466272225171": 11.0,
-        "3327097841107003917": 20.0,
+        "14197310116720301820": 50.0,
         "14337050298409450808": 30.0,
-        "11700781113966624968": 40.0,
-        "14197310116720301820": 50.0
-      },
-      "dict_root": 7114231151271096678,
-      "payload_hex": "0c14e807"
+        "3327097841107003917": 20.0
+      }
     },
     {
-      "step": 2,
-      "golden": false,
-      "flags_kdelta": true,
       "births": [],
-      "tombstones": [],
+      "dict_root": 7114231151271096678,
+      "flags_kdelta": true,
+      "golden": false,
       "ids": [
         3327097841107003917,
         11700781113966624968,
@@ -85,41 +84,42 @@
         14197310116720301820,
         14337050298409450808
       ],
+      "payload_hex": "1014",
+      "step": 2,
+      "tombstones": [],
       "values": {
-        "13716017466272225171": 11.0,
-        "3327097841107003917": 20.0,
-        "14337050298409450808": 31.0,
         "11700781113966624968": 40.0,
-        "14197310116720301820": 50.0
-      },
-      "dict_root": 7114231151271096678,
-      "payload_hex": "1014"
+        "13716017466272225171": 11.0,
+        "14197310116720301820": 50.0,
+        "14337050298409450808": 31.0,
+        "3327097841107003917": 20.0
+      }
     },
     {
-      "step": 3,
-      "golden": false,
-      "flags_kdelta": true,
       "births": [],
+      "dict_root": 9867953905294264953,
+      "flags_kdelta": true,
+      "golden": false,
+      "ids": [
+        3327097841107003917,
+        13716017466272225171,
+        14197310116720301820,
+        14337050298409450808
+      ],
+      "payload_hex": "0114",
+      "step": 3,
       "tombstones": [
         {
           "id": 11700781113966624968,
           "name": "mem_usage|region=us-west,cluster=prod|agg=sum"
         }
       ],
-      "ids": [
-        3327097841107003917,
-        13716017466272225171,
-        14197310116720301820,
-        14337050298409450808
-      ],
       "values": {
         "13716017466272225171": 11.0,
-        "3327097841107003917": 21.0,
+        "14197310116720301820": 50.0,
         "14337050298409450808": 31.0,
-        "14197310116720301820": 50.0
-      },
-      "dict_root": 9867953905294264953,
-      "payload_hex": "0114"
+        "3327097841107003917": 21.0
+      }
     }
   ]
 }

@@ -49,3 +49,19 @@ func epochIndex(t time.Time, rotate time.Duration) uint64 {
 	}
 	return uint64(t.UnixNano() / rotate.Nanoseconds())
 }
+
+// loadKeyRing builds a sketch.KeyRing from cfg.TenantKeys. Each entry's key
+// material is read from the environment variable it names. Returns an error
+// if any env var is empty; the config's Validate() must have been called
+// first, so by the time loadKeyRing is called env vars are guaranteed set.
+func loadKeyRing(entries []TenantKeyEntry) (sketch.KeyRing, error) {
+	ring := make(sketch.KeyRing, len(entries))
+	for _, e := range entries {
+		v := os.Getenv(e.EnvVar)
+		if v == "" {
+			return nil, fmt.Errorf("csresidual: tenant_keys version=%d: env var %q is empty or unset", e.Version, e.EnvVar)
+		}
+		ring[e.Version] = []byte(v)
+	}
+	return ring, nil
+}

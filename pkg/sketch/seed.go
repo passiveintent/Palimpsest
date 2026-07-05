@@ -37,6 +37,35 @@ func DeriveEphemeralSeed(tenantKey []byte, shardID uint64, epochIdx uint32, view
 	return binary.BigEndian.Uint64(okm)
 }
 
+// KeyRing is a versioned set of tenant keys for ADR-012 key rotation.
+// Each key is indexed by a uint8 version that matches wire.Frame.KeyVersion.
+// A tenant cycles keys (e.g. key_v0 → key_v1) after a compromise: the
+// encoder stamps each new frame with the active version, while old keys
+// remain in the ring so in-flight windows encoded under prior versions can
+// still be decoded within repair_horizon (ADR-013).
+type KeyRing map[uint8][]byte
+
+// Active returns the highest-numbered key version and its key material.
+// If the ring is empty it returns (0, nil).
+func (r KeyRing) Active() (version uint8, key []byte) {
+	first := true
+	for v, k := range r {
+		if first || v > version {
+			version = v
+			key = k
+			first = false
+		}
+	}
+	return version, key
+}
+
+// Lookup returns the key material for the given version.
+// The second return value is false if the version is not in the ring.
+func (r KeyRing) Lookup(version uint8) ([]byte, bool) {
+	key, ok := r[version]
+	return key, ok
+}
+
 // hkdfExtract implements the RFC 5869 "extract" step: PRK = HMAC-Hash(salt,
 // IKM). A nil/empty salt is replaced with HashLen zero bytes per the RFC.
 func hkdfExtract(salt, ikm []byte) []byte {

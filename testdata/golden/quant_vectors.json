@@ -1,19 +1,8 @@
 {
   "cases": [
     {
-      "description": "bits=8 simple values",
-      "values": [
-        0.0,
-        1.2,
-        -1.2,
-        6.0,
-        -6.0,
-        0.001,
-        -0.001,
-        3.14159
-      ],
       "bits": 8,
-      "scale": 0.05,
+      "description": "bits=8 simple values",
       "packed_hex": "0018e8788800003f",
       "roundtrip": [
         0.0,
@@ -24,40 +13,40 @@
         0.0,
         0.0,
         3.1500000469386578
+      ],
+      "scale": 0.05,
+      "values": [
+        0.0,
+        1.2,
+        -1.2,
+        6.0,
+        -6.0,
+        0.001,
+        -0.001,
+        3.14159
       ]
     },
     {
-      "description": "bits=8 clamps to int8 range",
-      "values": [
-        1000000000.0,
-        -1000000000.0,
-        200.0,
-        -200.0
-      ],
       "bits": 8,
-      "scale": 1.0,
+      "description": "bits=8 clamps to int8 range",
       "packed_hex": "7f807f80",
       "roundtrip": [
         127.0,
         -128.0,
         127.0,
         -128.0
+      ],
+      "scale": 1.0,
+      "values": [
+        1000000000.0,
+        -1000000000.0,
+        200.0,
+        -200.0
       ]
     },
     {
-      "description": "bits=8 exact-half ties round away from zero",
-      "values": [
-        0.5,
-        -0.5,
-        1.5,
-        -1.5,
-        2.5,
-        -2.5,
-        100.5,
-        -100.5
-      ],
       "bits": 8,
-      "scale": 1.0,
+      "description": "bits=8 exact-half ties round away from zero",
       "packed_hex": "01ff02fe03fd659b",
       "roundtrip": [
         1.0,
@@ -68,21 +57,22 @@
         -3.0,
         101.0,
         -101.0
+      ],
+      "scale": 1.0,
+      "values": [
+        0.5,
+        -0.5,
+        1.5,
+        -1.5,
+        2.5,
+        -2.5,
+        100.5,
+        -100.5
       ]
     },
     {
-      "description": "bits=16 simple values",
-      "values": [
-        0.0,
-        1.2,
-        -1.2,
-        100.0,
-        -100.0,
-        1600.0,
-        -1600.0
-      ],
       "bits": 16,
-      "scale": 0.01,
+      "description": "bits=16 simple values",
       "packed_hex": "0000780088ff1027f0d8ff7f0080",
       "roundtrip": [
         0.0,
@@ -92,34 +82,35 @@
         -99.99999776482582,
         327.66999267600477,
         -327.67999267578125
+      ],
+      "scale": 0.01,
+      "values": [
+        0.0,
+        1.2,
+        -1.2,
+        100.0,
+        -100.0,
+        1600.0,
+        -1600.0
       ]
     },
     {
-      "description": "bits=16 clamps to int16 range",
-      "values": [
-        1000000000.0,
-        -1000000000.0
-      ],
       "bits": 16,
-      "scale": 1.0,
+      "description": "bits=16 clamps to int16 range",
       "packed_hex": "ff7f0080",
       "roundtrip": [
         32767.0,
         -32768.0
+      ],
+      "scale": 1.0,
+      "values": [
+        1000000000.0,
+        -1000000000.0
       ]
     },
     {
-      "description": "bits=16 exact-half ties round away from zero",
-      "values": [
-        0.5,
-        -0.5,
-        1.5,
-        -1.5,
-        32767.5,
-        -32767.5
-      ],
       "bits": 16,
-      "scale": 1.0,
+      "description": "bits=16 exact-half ties round away from zero",
       "packed_hex": "0100ffff0200feffff7f0080",
       "roundtrip": [
         1.0,
@@ -128,6 +119,15 @@
         -2.0,
         32767.0,
         -32768.0
+      ],
+      "scale": 1.0,
+      "values": [
+        0.5,
+        -0.5,
+        1.5,
+        -1.5,
+        32767.5,
+        -32767.5
       ]
     }
   ]
