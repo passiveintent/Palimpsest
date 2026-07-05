@@ -17,7 +17,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/purushpsm147/palimpsest/internal/ports"
+	"github.com/passiveintent/Palimpsest/internal/ports"
 )
 
 // defaultTimeout bounds one webhook POST so a hung downstream endpoint

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/purushpsm147/palimpsest/internal/ports"
+	"github.com/passiveintent/Palimpsest/internal/ports"
 )
 
 func newTestAuditor(t *testing.T, events []TruthEvent) *Auditor {

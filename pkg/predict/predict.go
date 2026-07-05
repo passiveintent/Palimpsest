@@ -7,7 +7,7 @@
 
 package predict
 
-import "github.com/purushpsm147/palimpsest/pkg/wire"
+import "github.com/passiveintent/Palimpsest/pkg/wire"
 
 // Predictor supplies the open-loop baseline (ADR-003) that a residual is
 // measured against before it is sketched. "Open-loop" means the baseline

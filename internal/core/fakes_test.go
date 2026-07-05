@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/purushpsm147/palimpsest/internal/ports"
+	"github.com/passiveintent/Palimpsest/internal/ports"
 )
 
 // fakeAnomalySink is the in-memory ports.AnomalySink fake used by every

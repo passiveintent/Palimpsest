@@ -28,7 +28,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/purushpsm147/palimpsest/pkg/wire"
+	"github.com/passiveintent/Palimpsest/pkg/wire"
 )
 
 // processedSubdir is where successfully-decoded frame files are moved after

@@ -13,8 +13,8 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/purushpsm147/palimpsest/internal/audit"
-	"github.com/purushpsm147/palimpsest/pkg/sketch"
+	"github.com/passiveintent/Palimpsest/internal/audit"
+	"github.com/passiveintent/Palimpsest/pkg/sketch"
 )
 
 // aggregates are the three ADR-008 fold kinds every group reports.

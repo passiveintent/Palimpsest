@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/purushpsm147/palimpsest/pkg/wire"
+	"github.com/passiveintent/Palimpsest/pkg/wire"
 )
 
 type ringSample struct {

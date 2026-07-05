@@ -25,7 +25,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/purushpsm147/palimpsest/pkg/wire"
+	"github.com/passiveintent/Palimpsest/pkg/wire"
 )
 
 // Snapshot is one series' persisted forensic window: the ring-buffer

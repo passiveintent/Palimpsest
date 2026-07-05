@@ -19,8 +19,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/purushpsm147/palimpsest/pkg/sketch"
-	"github.com/purushpsm147/palimpsest/pkg/wire"
+	"github.com/passiveintent/Palimpsest/pkg/sketch"
+	"github.com/passiveintent/Palimpsest/pkg/wire"
 )
 
 // snapshotEntryWireBytes approximates one wire.SnapshotEntry's encoded

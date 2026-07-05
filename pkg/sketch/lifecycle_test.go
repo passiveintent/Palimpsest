@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/purushpsm147/palimpsest/pkg/predict"
-	"github.com/purushpsm147/palimpsest/pkg/wire"
+	"github.com/passiveintent/Palimpsest/pkg/predict"
+	"github.com/passiveintent/Palimpsest/pkg/wire"
 )
 
 // TestTrackerLifecycle is the acceptance fixture: a hand-computed 3-series

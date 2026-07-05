@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/purushpsm147/palimpsest/internal/ports"
+	"github.com/passiveintent/Palimpsest/internal/ports"
 )
 
 func readLines(t *testing.T, path string) []string {

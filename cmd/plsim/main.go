@@ -28,7 +28,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/purushpsm147/palimpsest/internal/audit"
+	"github.com/passiveintent/Palimpsest/internal/audit"
 )
 
 func main() {

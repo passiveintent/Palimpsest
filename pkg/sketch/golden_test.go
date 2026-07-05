@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/purushpsm147/palimpsest/pkg/wire"
+	"github.com/passiveintent/Palimpsest/pkg/wire"
 )
 
 // TestGoldenVectors cross-checks this package against vectors produced by

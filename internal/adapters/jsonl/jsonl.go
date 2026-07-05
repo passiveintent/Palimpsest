@@ -18,7 +18,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/purushpsm147/palimpsest/internal/ports"
+	"github.com/passiveintent/Palimpsest/internal/ports"
 )
 
 // AnomalySink appends one JSON object per ports.AnomalyEvent to a file.

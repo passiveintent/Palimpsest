@@ -11,9 +11,9 @@ import (
 	"math"
 	"time"
 
-	"github.com/purushpsm147/palimpsest/pkg/predict"
-	"github.com/purushpsm147/palimpsest/pkg/sketch"
-	"github.com/purushpsm147/palimpsest/pkg/wire"
+	"github.com/passiveintent/Palimpsest/pkg/predict"
+	"github.com/passiveintent/Palimpsest/pkg/sketch"
+	"github.com/passiveintent/Palimpsest/pkg/wire"
 )
 
 // minTestQuantScale mirrors otel/processor/csresidual's minQuantScale: it

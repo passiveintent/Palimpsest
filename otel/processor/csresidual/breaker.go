@@ -12,7 +12,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/purushpsm147/palimpsest/pkg/sketch"
+	"github.com/passiveintent/Palimpsest/pkg/sketch"
 )
 
 // Alert is a churn-breaker trip event (ADR-009: "Churn circuit breaker

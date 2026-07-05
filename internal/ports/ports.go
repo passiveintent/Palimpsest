@@ -25,7 +25,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/purushpsm147/palimpsest/pkg/wire"
+	"github.com/passiveintent/Palimpsest/pkg/wire"
 )
 
 // FrameSource supplies decoded wire frames to the engine (e.g.

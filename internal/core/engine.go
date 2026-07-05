@@ -20,13 +20,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/purushpsm147/palimpsest/pkg/recover"
-	"github.com/purushpsm147/palimpsest/pkg/sketch"
-	"github.com/purushpsm147/palimpsest/pkg/wire"
+	"github.com/passiveintent/Palimpsest/pkg/recover"
+	"github.com/passiveintent/Palimpsest/pkg/sketch"
+	"github.com/passiveintent/Palimpsest/pkg/wire"
 
-	"github.com/purushpsm147/palimpsest/internal/forensics"
-	"github.com/purushpsm147/palimpsest/internal/metrics"
-	"github.com/purushpsm147/palimpsest/internal/ports"
+	"github.com/passiveintent/Palimpsest/internal/forensics"
+	"github.com/passiveintent/Palimpsest/internal/metrics"
+	"github.com/passiveintent/Palimpsest/internal/ports"
 )
 
 // Config configures an Engine.

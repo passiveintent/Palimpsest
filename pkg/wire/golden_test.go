@@ -22,8 +22,8 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/purushpsm147/palimpsest/pkg/sketch"
-	"github.com/purushpsm147/palimpsest/pkg/wire"
+	"github.com/passiveintent/Palimpsest/pkg/sketch"
+	"github.com/passiveintent/Palimpsest/pkg/wire"
 )
 
 // TestGoldenVectors cross-checks pkg/wire against vectors produced by the

@@ -12,7 +12,7 @@ import (
 	"math"
 	"math/rand"
 
-	"github.com/purushpsm147/palimpsest/pkg/sketch"
+	"github.com/passiveintent/Palimpsest/pkg/sketch"
 )
 
 // Confidence values a Result may carry (ADR-009's five recovery

@@ -24,8 +24,8 @@ receivers:
 
 processors:
   - gomod: go.opentelemetry.io/collector/processor/batchprocessor v0.155.0
-  - gomod: github.com/purushpsm147/palimpsest/otel v0.0.0
-    import: github.com/purushpsm147/palimpsest/otel/processor/csresidual
+  - gomod: github.com/passiveintent/Palimpsest/otel v0.0.0
+    import: github.com/passiveintent/Palimpsest/otel/processor/csresidual
     # csresidual is a subpackage of the "otel" module, not a module of its
     # own (otel/go.mod covers the whole otel/ tree) — gomod must name the
     # actual module for dependency/replace resolution, with the factory's
@@ -34,5 +34,5 @@ processors:
     # GitHub instead of using the replace below.
 
 replaces:
-  - github.com/purushpsm147/palimpsest/otel => /src/otel
-  - github.com/purushpsm147/palimpsest => /src
+  - github.com/passiveintent/Palimpsest/otel => /src/otel
+  - github.com/passiveintent/Palimpsest => /src

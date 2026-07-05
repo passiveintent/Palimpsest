@@ -28,7 +28,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/purushpsm147/palimpsest/pkg/wire"
+	"github.com/passiveintent/Palimpsest/pkg/wire"
 )
 
 // maxFrameBytes bounds one request body so a malformed/hostile client can't

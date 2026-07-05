@@ -12,8 +12,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/purushpsm147/palimpsest/pkg/predict"
-	"github.com/purushpsm147/palimpsest/pkg/wire"
+	"github.com/passiveintent/Palimpsest/pkg/predict"
+	"github.com/passiveintent/Palimpsest/pkg/wire"
 )
 
 // Tracker manages the ephemeral dictionary lifecycle for one (emitter,

@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/purushpsm147/palimpsest/internal/ports"
+	"github.com/passiveintent/Palimpsest/internal/ports"
 )
 
 // revisionTolerance is how close a repaired detection's final value must

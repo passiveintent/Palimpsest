@@ -30,7 +30,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/purushpsm147/palimpsest/internal/ports"
+	"github.com/passiveintent/Palimpsest/internal/ports"
 )
 
 const defaultTimeout = 10 * time.Second

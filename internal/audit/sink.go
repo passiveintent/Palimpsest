@@ -10,7 +10,7 @@ package audit
 import (
 	"context"
 
-	"github.com/purushpsm147/palimpsest/internal/ports"
+	"github.com/passiveintent/Palimpsest/internal/ports"
 )
 
 // Sink wraps a ports.AnomalySink, feeding every emitted event to an

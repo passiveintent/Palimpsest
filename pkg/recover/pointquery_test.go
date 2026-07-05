@@ -11,7 +11,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/purushpsm147/palimpsest/pkg/sketch"
+	"github.com/passiveintent/Palimpsest/pkg/sketch"
 )
 
 // TestPointQuerySingleSeries is the ADR-009 acceptance fixture: at m=2000

@@ -1,4 +1,4 @@
-module github.com/purushpsm147/palimpsest
+module github.com/passiveintent/Palimpsest
 
 go 1.22
 

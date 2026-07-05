@@ -15,11 +15,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/purushpsm147/palimpsest/pkg/sketch"
-	"github.com/purushpsm147/palimpsest/pkg/wire"
+	"github.com/passiveintent/Palimpsest/pkg/sketch"
+	"github.com/passiveintent/Palimpsest/pkg/wire"
 
-	"github.com/purushpsm147/palimpsest/internal/forensics"
-	"github.com/purushpsm147/palimpsest/internal/metrics"
+	"github.com/passiveintent/Palimpsest/internal/forensics"
+	"github.com/passiveintent/Palimpsest/internal/metrics"
 )
 
 var testTenantKey = []byte("e2e-test-tenant-key-do-not-use-in-prod")

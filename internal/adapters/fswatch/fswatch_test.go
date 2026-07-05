@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/purushpsm147/palimpsest/pkg/wire"
+	"github.com/passiveintent/Palimpsest/pkg/wire"
 )
 
 func writeFrameFile(t *testing.T, dir, name string, f *wire.Frame) {

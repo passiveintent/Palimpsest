@@ -1,9 +1,9 @@
-module github.com/purushpsm147/palimpsest/otel
+module github.com/passiveintent/Palimpsest/otel
 
 go 1.25.0
 
 require (
-	github.com/purushpsm147/palimpsest v0.0.0
+	github.com/passiveintent/Palimpsest v0.0.0
 	go.opentelemetry.io/collector/component v1.61.0
 	go.opentelemetry.io/collector/component/componenttest v0.155.0
 	go.opentelemetry.io/collector/confmap v1.61.0
@@ -44,4 +44,4 @@ require (
 	golang.org/x/sys v0.45.0 // indirect
 )
 
-replace github.com/purushpsm147/palimpsest => ../
+replace github.com/passiveintent/Palimpsest => ../

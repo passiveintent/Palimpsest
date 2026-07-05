@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/purushpsm147/palimpsest/pkg/wire"
+	"github.com/passiveintent/Palimpsest/pkg/wire"
 )
 
 func encodeBlob(t *testing.T, entries []wire.SnapshotEntry, gzipped bool) []byte {

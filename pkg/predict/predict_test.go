@@ -10,7 +10,7 @@ package predict
 import (
 	"testing"
 
-	"github.com/purushpsm147/palimpsest/pkg/wire"
+	"github.com/passiveintent/Palimpsest/pkg/wire"
 )
 
 func TestHoldID(t *testing.T) {

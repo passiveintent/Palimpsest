@@ -534,10 +534,33 @@ def gen_recovery_watermark() -> dict:
 # --------------------------------------------------------------------------
 
 
+def _canon(obj: object, ndigits: int = 10) -> object:
+    """Recursively round every float to *ndigits* decimal places.
+
+    FISTA runs 350 iterations of matrix algebra whose low-order bits differ
+    across BLAS backends (Windows/AVX2 vs Linux/OpenBLAS vs macOS/Accelerate).
+    Rounding to 1e-10 is far above the numerical noise (~1e-12) while still
+    well below the Go tolerance tests' 1e-4 threshold, so it produces stable
+    JSON on every machine without changing any answer that matters.
+    """
+    if isinstance(obj, float):
+        return round(obj, ndigits)
+    if isinstance(obj, dict):
+        return {k: _canon(v, ndigits) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_canon(v, ndigits) for v in obj]
+    return obj
+
+
 def write_json(path: Path, obj: dict) -> None:
     with path.open("w", encoding="utf-8", newline="\n") as f:
         json.dump(obj, f, indent=2, sort_keys=False)
         f.write("\n")
+
+
+def write_recovery_json(path: Path, obj: dict) -> None:
+    """Like write_json but canonicalises floats first (BLAS-determinism fix)."""
+    write_json(path, _canon(obj))
 
 
 def main(argv: list[str]) -> int:
@@ -564,10 +587,10 @@ def main(argv: list[str]) -> int:
     (out / "frame_residual.bin").write_bytes(frame_bytes)
 
     print("generating recovery_case1.json (FISTA solve over N=50000) ...", file=sys.stderr)
-    write_json(out / "recovery_case1.json", gen_recovery_case1())
+    write_recovery_json(out / "recovery_case1.json", gen_recovery_case1())
 
     print("generating recovery_watermark.json (FISTA solve x2) ...", file=sys.stderr)
-    write_json(out / "recovery_watermark.json", gen_recovery_watermark())
+    write_recovery_json(out / "recovery_watermark.json", gen_recovery_watermark())
 
     print("done.", file=sys.stderr)
     return 0

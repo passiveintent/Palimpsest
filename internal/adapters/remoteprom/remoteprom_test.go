@@ -18,7 +18,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/purushpsm147/palimpsest/internal/ports"
+	"github.com/passiveintent/Palimpsest/internal/ports"
 )
 
 // The functions below are a minimal, test-only decoder for the same

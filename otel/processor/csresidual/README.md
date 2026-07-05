@@ -8,8 +8,8 @@ ADR-009, ADR-010, ADR-011, ADR-012, and ADR-013 from the Palimpsest repo
 root (`../../docs/adr/`); `../../docs/SPEC.md` is the normative wire/math
 spec this package encodes against.
 
-This module (`github.com/purushpsm147/palimpsest/otel`) is intentionally
-separate from the root `github.com/purushpsm147/palimpsest` module
+This module (`github.com/passiveintent/Palimpsest/otel`) is intentionally
+separate from the root `github.com/passiveintent/Palimpsest` module
 (ADR-007: "OTel deps churn fast; core must be embeddable"): the collector
 SDK and its dependency tree live here; `pkg/sketch`, `pkg/wire`, and
 `pkg/predict` (imported via a `replace` directive at the repo root, since
@@ -74,7 +74,7 @@ receivers:
 
 processors:
   - gomod: go.opentelemetry.io/collector/processor/batchprocessor v0.155.0
-  - gomod: github.com/purushpsm147/palimpsest/otel v0.0.0
+  - gomod: github.com/passiveintent/Palimpsest/otel v0.0.0
     # Local checkout, not yet published: point at your clone.
     # path: /abs/path/to/Palimpsest/otel
 ```
@@ -84,8 +84,8 @@ If you haven't published this module, add a `replace` line under `dist:`
 
 ```yaml
 replaces:
-  - github.com/purushpsm147/palimpsest/otel => /abs/path/to/Palimpsest/otel
-  - github.com/purushpsm147/palimpsest => /abs/path/to/Palimpsest
+  - github.com/passiveintent/Palimpsest/otel => /abs/path/to/Palimpsest/otel
+  - github.com/passiveintent/Palimpsest => /abs/path/to/Palimpsest
 ```
 
 Then generate and build:

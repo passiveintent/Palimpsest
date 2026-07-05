@@ -15,7 +15,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/purushpsm147/palimpsest/internal/ports"
+	"github.com/passiveintent/Palimpsest/internal/ports"
 )
 
 func TestSink_PostsJSONBody(t *testing.T) {

@@ -27,6 +27,9 @@ venv/
 .DS_Store
 Thumbs.db
 
+# Generated documentation and prompts
+/docs/generated/
+
 # demo/ runtime artifacts (docker compose writes these via bind mounts;
 # per-run output, not source)
 demo/frames/

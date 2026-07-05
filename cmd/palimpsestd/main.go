@@ -27,19 +27,19 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/purushpsm147/palimpsest/pkg/wire"
+	"github.com/passiveintent/Palimpsest/pkg/wire"
 
-	"github.com/purushpsm147/palimpsest/internal/adapters/fswatch"
-	"github.com/purushpsm147/palimpsest/internal/adapters/httpsrc"
-	"github.com/purushpsm147/palimpsest/internal/adapters/jsonl"
-	"github.com/purushpsm147/palimpsest/internal/adapters/memstate"
-	"github.com/purushpsm147/palimpsest/internal/adapters/remoteprom"
-	"github.com/purushpsm147/palimpsest/internal/adapters/webhook"
-	"github.com/purushpsm147/palimpsest/internal/audit"
-	"github.com/purushpsm147/palimpsest/internal/core"
-	"github.com/purushpsm147/palimpsest/internal/forensics"
-	"github.com/purushpsm147/palimpsest/internal/metrics"
-	"github.com/purushpsm147/palimpsest/internal/ports"
+	"github.com/passiveintent/Palimpsest/internal/adapters/fswatch"
+	"github.com/passiveintent/Palimpsest/internal/adapters/httpsrc"
+	"github.com/passiveintent/Palimpsest/internal/adapters/jsonl"
+	"github.com/passiveintent/Palimpsest/internal/adapters/memstate"
+	"github.com/passiveintent/Palimpsest/internal/adapters/remoteprom"
+	"github.com/passiveintent/Palimpsest/internal/adapters/webhook"
+	"github.com/passiveintent/Palimpsest/internal/audit"
+	"github.com/passiveintent/Palimpsest/internal/core"
+	"github.com/passiveintent/Palimpsest/internal/forensics"
+	"github.com/passiveintent/Palimpsest/internal/metrics"
+	"github.com/passiveintent/Palimpsest/internal/ports"
 )
 
 var processStart = time.Now()

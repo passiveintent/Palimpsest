@@ -12,8 +12,8 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/purushpsm147/palimpsest/pkg/sketch"
-	"github.com/purushpsm147/palimpsest/pkg/wire"
+	"github.com/passiveintent/Palimpsest/pkg/sketch"
+	"github.com/passiveintent/Palimpsest/pkg/wire"
 )
 
 // BenchmarkRecover measures FISTA + debias decode time at

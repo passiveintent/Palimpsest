@@ -11,8 +11,8 @@ import (
 	"math"
 	"sort"
 
-	"github.com/purushpsm147/palimpsest/pkg/sketch"
-	"github.com/purushpsm147/palimpsest/pkg/wire"
+	"github.com/passiveintent/Palimpsest/pkg/sketch"
+	"github.com/passiveintent/Palimpsest/pkg/wire"
 )
 
 // dictEntry is one active series known to a Dictionary: its name (needed

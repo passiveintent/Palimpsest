@@ -11,7 +11,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/purushpsm147/palimpsest/pkg/wire"
+	"github.com/passiveintent/Palimpsest/pkg/wire"
 )
 
 // residualStats is an online (Welford) mean/variance estimator used to

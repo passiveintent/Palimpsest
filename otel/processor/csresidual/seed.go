@@ -12,7 +12,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/purushpsm147/palimpsest/pkg/sketch"
+	"github.com/passiveintent/Palimpsest/pkg/sketch"
 )
 
 // loadTenantKey reads the HKDF input keying material from the environment

@@ -10,10 +10,10 @@ package core
 import (
 	"math"
 
-	"github.com/purushpsm147/palimpsest/pkg/recover"
-	"github.com/purushpsm147/palimpsest/pkg/wire"
+	"github.com/passiveintent/Palimpsest/pkg/recover"
+	"github.com/passiveintent/Palimpsest/pkg/wire"
 
-	"github.com/purushpsm147/palimpsest/internal/ports"
+	"github.com/passiveintent/Palimpsest/internal/ports"
 )
 
 // Matcher implements ADR-009's five recovery substrates, translating

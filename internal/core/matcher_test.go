@@ -10,8 +10,8 @@ package core
 import (
 	"testing"
 
-	"github.com/purushpsm147/palimpsest/pkg/recover"
-	"github.com/purushpsm147/palimpsest/pkg/wire"
+	"github.com/passiveintent/Palimpsest/pkg/recover"
+	"github.com/passiveintent/Palimpsest/pkg/wire"
 )
 
 func TestMatcher_EvalDeviation(t *testing.T) {
