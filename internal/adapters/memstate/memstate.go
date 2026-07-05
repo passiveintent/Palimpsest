@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2026 Purushottam <purushottam@passiveintent.dev>
+ *
+ * This source code is licensed under the AGPL-3.0-only license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Package memstate implements ports.StateStore as an in-memory map with an
 // optional gob-encoded snapshot file: Save updates memory immediately and
 // (if a path is configured) persists the whole map via a write-to-temp,

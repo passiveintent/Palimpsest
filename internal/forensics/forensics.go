@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2026 Purushottam <purushottam@passiveintent.dev>
+ *
+ * This source code is licensed under the AGPL-3.0-only license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Package forensics implements ADR-009's "dashcam" snapshot store: when a
 // window's recovery flags a series, its speculatively-pushed ring-buffer
 // window (wire.SnapshotBlob) is decoded, filtered down to the flagged

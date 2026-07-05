@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2026 Purushottam <purushottam@passiveintent.dev>
+ *
+ * This source code is licensed under the AGPL-3.0-only license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Package fswatch implements a ports.FrameSource that polls a directory
 // for wire-encoded frame files (the convention internal/adapters/jsonl's
 // counterpart on the encode side — e.g. the otel/processor/csresidual

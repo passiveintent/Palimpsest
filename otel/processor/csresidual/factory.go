@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2026 Purushottam <purushottam@passiveintent.dev>
+ *
+ * This source code is licensed under the AGPL-3.0-only license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Package csresidual implements the Palimpsest "csresidual" OpenTelemetry
 // Collector metrics processor: it sketches high-cardinality metric
 // residuals into small linear measurements (compressed sensing) rather

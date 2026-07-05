@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2026 Purushottam <purushottam@passiveintent.dev>
+ *
+ * This source code is licensed under the AGPL-3.0-only license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Package remoteprom implements ports.SeriesSink as a Prometheus
 // remote-write client (ADR-010's Layer 1: keyframes/rehydrated series
 // persisted as an exact, forever-queryable PromQL layer; ADR-011's
