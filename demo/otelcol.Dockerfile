@@ -1,7 +1,13 @@
 # Builds a real OTel Collector distribution containing this repo's
 # csresidual processor, via ocb (see demo/otelcol-builder.yaml). Optional
 # `otel` compose profile only — best-effort, see demo/README.md.
-FROM golang:1.22-alpine AS build
+#
+# This stage deliberately uses a newer Go than the root module's
+# golang:1.22-alpine (plsim.Dockerfile/palimpsestd.Dockerfile): otel/go.mod
+# requires go 1.25.0, and ocb v0.155.0 itself requires >= go1.25 to even
+# `go install`. Bump this alongside otel/go.mod and demo/otelcol-builder.yaml
+# together if either changes.
+FROM golang:1.25-alpine AS build
 RUN apk add --no-cache git
 WORKDIR /src
 COPY go.mod go.sum ./

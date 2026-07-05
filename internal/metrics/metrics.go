@@ -78,9 +78,9 @@ type Metrics struct {
 	snapshotsLatencySeconds *labeled // key: "" -> cumulative nanoseconds
 	snapshotsLatencyCount   int64
 
-	breakerTrips      int64
-	clockSkewMs       *labeled // key: emitter -> latest skew (gauge)
-	lateFramesDropped int64
+	breakerTrips           int64
+	clockSkewMs            *labeled // key: emitter -> latest skew (gauge)
+	lateFramesDropped      int64
 	duplicateFramesDropped int64
 
 	scalarMu    sync.Mutex // guards the plain int64 scalar fields above

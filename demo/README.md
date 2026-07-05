@@ -113,7 +113,7 @@ see `internal/core/engine.go`'s dedup gate and
 `TestE2E_DuplicateResidualFrameDeduped`/`TestE2E_WatermarkRepair`). To see
 it:
 
-```
+```bash
 PLSIM_EMITTERS=2 PLSIM_PARTITION=2m PLSIM_DUPLICATE_RATE=0.2 docker compose up --build
 ```
 
@@ -129,7 +129,7 @@ becoming non-zero.
 Drift is on by default (`--drift-rate 10`, a handful of dedicated groups).
 To make it the star of the show on its own:
 
-```
+```bash
 PLSIM_CHURN_RATE=0 PLSIM_HOT_INSTANCE=0 PLSIM_DRIFT_RATE=10 docker compose up --build
 ```
 
@@ -141,13 +141,14 @@ cadence").
 
 ## Grafana (optional)
 
-Open **http://localhost:3000** (anonymous viewer access, no login
-required). The **Palimpsest** folder has one pre-provisioned dashboard,
-"Layer 1 Keyframe + Anomaly Detail" (`demo/grafana-dashboard.json`): pick
-any `$logical_name` the fleet has produced, and watch its exact value —
-sparse points at keyframe cadence during quiet periods, densifying to
-flush cadence whenever that series is under active recovery. Prometheus
-itself is at **http://localhost:9090** if you'd rather run raw PromQL
+Open **[localhost:3000](http://localhost:3000)** (anonymous viewer access,
+no login required). The **Palimpsest** folder has one pre-provisioned
+dashboard, "Layer 1 Keyframe + Anomaly Detail"
+(`demo/grafana-dashboard.json`): pick any `$logical_name` the fleet has
+produced, and watch its exact value — sparse points at keyframe cadence
+during quiet periods, densifying to flush cadence whenever that series is
+under active recovery. Prometheus itself is at
+**[localhost:9090](http://localhost:9090)** if you'd rather run raw PromQL
 (`{__name__=~".+", palimpsest_logical_name="..."}`).
 
 ## Optional: the real OTel Collector ingestion path
@@ -161,23 +162,29 @@ distribution (via `ocb`) running this repo's own
 (`hostmetrics` receiver), in shadow mode, to demonstrate the genuine
 ingestion path end-to-end:
 
-```
+```bash
 docker compose --profile otel up --build otel-collector
 ```
 
-**This is best-effort.** `ocb` and the `hostmetricsreceiver` component
-version (`demo/otelcol-builder.yaml`) must match the collector core
-version `otel/go.mod` is pinned to; if upstream versions have drifted
-since this was written, the build may fail with a dependency resolution
-error. The default `docker compose up` above does not depend on this
-profile at all — it is a bonus demonstration, not part of the acceptance
-story. If it fails for you, `docker compose build otel-collector` will
-show exactly which module resolution step broke; that's the place to bump
+Verified working as of this writing (`docker compose --profile otel up
+--build otel-collector` builds, starts, ingests real `hostmetrics` data,
+and writes real `*.plmp` frames to the shared volume via the csresidual
+processor in shadow mode). **It's still best-effort going forward**: `ocb`
+and the `hostmetricsreceiver` component version
+(`demo/otelcol-builder.yaml`) must match the collector core version
+`otel/go.mod` is pinned to (also note `demo/otelcol.Dockerfile` builds this
+stage on a newer Go than the root module's images, since `ocb`/`otel/go.mod`
+require it) — if upstream versions have drifted since this was written,
+the build may fail with a dependency resolution error. The default
+`docker compose up` above does not depend on this profile at all — it is a
+bonus demonstration, not part of the acceptance story. If it fails for
+you, `docker compose build otel-collector` will show exactly which module
+resolution step broke; that's the place to bump
 a version pin.
 
 ## Cleaning up
 
-```
+```bash
 docker compose down            # stop and remove containers
 rm -rf frames out truth        # discard generated run artifacts (gitignored already)
 ```
