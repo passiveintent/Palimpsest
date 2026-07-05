@@ -164,6 +164,21 @@ func (t *Tracker) FullDict() []wire.DictDelta {
 	return out
 }
 
+// CurrentValues returns each active series' most recently observed raw
+// value (the same source FullDict uses for InitValue), keyed by ID. Unlike
+// a Predictor's own baseline, this always reflects the latest Observe call
+// regardless of birth/keyframe timing — callers rebuilding a keyframe
+// payload or refreshing a Predictor's baseline via LoadKeyframe (ADR-003)
+// should read from here, not from the Predictor, to avoid re-emitting a
+// stale birth-time value.
+func (t *Tracker) CurrentValues() map[uint64]float64 {
+	out := make(map[uint64]float64, len(t.active))
+	for id := range t.active {
+		out[id] = t.lastValue[id]
+	}
+	return out
+}
+
 // TopKResiduals returns up to k active series' residuals from the current
 // window (see ResetWindow), keyed by ID, ranked by absolute magnitude
 // (ties broken by ID for determinism). Used to pick FALLBACK heavy-hitters

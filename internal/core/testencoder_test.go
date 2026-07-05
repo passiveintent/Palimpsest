@@ -106,7 +106,7 @@ func (e *testEncoder) flush(now time.Time, seq uint32, values map[string]float64
 		e.keyframeCount++
 
 		ids := e.tracker.ActiveIDs()
-		values64 := e.pred.LastWindowValues()
+		values64 := e.tracker.CurrentValues()
 		values32 := make(map[uint64]float32, len(values64))
 		for id, v := range values64 {
 			values32[id] = float32(v)
@@ -127,6 +127,11 @@ func (e *testEncoder) flush(now time.Time, seq uint32, values map[string]float64
 			f.DictDeltas = dictDeltas
 		}
 		e.prevKeyframeValues = values32
+		// ADR-003: a keyframe is the only steady-state point the open-loop
+		// predictor baseline is allowed to move. Refresh it to the true
+		// current value here, or residuals accumulate unbounded from birth
+		// forever instead of resetting each keyframe.
+		e.pred.LoadKeyframe(values64)
 	} else {
 		scale := residualScale(y, e.bits)
 		payload, err := wire.Quantize(y, uint8(e.bits), scale)

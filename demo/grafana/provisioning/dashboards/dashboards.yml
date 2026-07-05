@@ -1,0 +1,15 @@
+apiVersion: 1
+providers:
+  - name: palimpsest
+    orgId: 1
+    folder: Palimpsest
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      # Deliberately NOT under /etc/grafana/provisioning: that whole tree is
+      # one read-only bind mount (docker-compose.yml), and Docker cannot
+      # create a second mountpoint (the dashboard JSON file) nested inside
+      # an already-mounted read-only directory. /etc/grafana/dashboards is
+      # its own separate, non-nested mount instead.
+      path: /etc/grafana/dashboards

@@ -489,3 +489,200 @@ func TestE2E_DegradedHealsOnGoldenKeyframe(t *testing.T) {
 		t.Fatalf("expected shard %d to heal after a golden keyframe with a correct dict_root", shardID)
 	}
 }
+
+// TestE2E_DuplicateResidualFrameDeduped covers the ADR-013 dedup acceptance
+// scenario: a RESIDUAL frame delivered twice for the same (emitter, window)
+// — an at-least-once retry, or plsim's --duplicate-rate — must not be
+// merged twice into the window's sketch, must not trigger a spurious
+// repair/revision, and must be counted via Metrics.DuplicateFramesDropped.
+// Repair (a *different* emitter's first-ever late contribution) is a
+// distinct, legitimate path covered by TestE2E_WatermarkRepair above.
+func TestE2E_DuplicateResidualFrameDeduped(t *testing.T) {
+	const (
+		shardID   = uint64(6)
+		emitterID = uint64(601)
+		viewID    = uint16(0)
+		m         = 200
+		d         = 6
+		bits      = 8
+		n         = 30
+	)
+
+	cfg := Config{
+		TenantKey:        testTenantKey,
+		MaxResidual:      40.0,
+		AllowedLateness:  2,
+		RepairHorizon:    5 * time.Minute,
+		EmittersExpected: 1,
+		FISTAIters:       200,
+		FISTALambda:      0.05,
+		FISTAPowerIters:  30,
+		FISTAThreshold:   0.3,
+		DriftThreshold:   1e9,
+	}
+	eng, sink, _, met, clock := newTestEngine(cfg)
+	enc := newTestEncoder(testTenantKey, shardID, emitterID, viewID, 0, m, d, bits, 1_000_000, 1, time.Hour)
+
+	names := make([]string, n)
+	for i := range names {
+		names[i] = fmt.Sprintf("dup_metric_%02d|shard=6|agg=sum", i)
+	}
+	baseline := func() map[string]float64 { return constValues(names, 10.0) }
+	anomV := func() map[string]float64 {
+		v := baseline()
+		v[names[0]] = 10.0 + 8.0
+		return v
+	}
+
+	eng.HandleFrame(ctx, enc.flush(clock.Now(), 0, baseline(), false))
+	clock.Advance(10 * time.Second)
+
+	dupFrame := enc.flush(clock.Now(), 1, anomV(), false)
+	eng.HandleFrame(ctx, dupFrame)
+	clock.Advance(10 * time.Second)
+
+	for s := uint32(2); s <= uint32(1+cfg.AllowedLateness); s++ {
+		eng.HandleFrame(ctx, enc.flush(clock.Now(), s, baseline(), false))
+		clock.Advance(10 * time.Second)
+	}
+
+	countWindow1 := func() int {
+		n := 0
+		for _, ev := range sink.Events() {
+			if ev.Substrate == "deviation" && ev.WindowID == 1 {
+				n++
+			}
+		}
+		return n
+	}
+
+	initialCount := countWindow1()
+	if initialCount == 0 {
+		t.Fatalf("expected an initial deviation event for window 1 before the duplicate")
+	}
+	if got := met.DuplicateFramesDropped(); got != 0 {
+		t.Fatalf("DuplicateFramesDropped before any duplicate = %d, want 0", got)
+	}
+
+	// Redeliver the EXACT SAME frame object for window 1 from the same
+	// emitter (at-least-once retry), still well within RepairHorizon.
+	eng.HandleFrame(ctx, dupFrame)
+
+	if got := met.DuplicateFramesDropped(); got != 1 {
+		t.Fatalf("DuplicateFramesDropped after resending window 1's frame = %d, want 1", got)
+	}
+	for _, ev := range sink.Events() {
+		if ev.Substrate == "deviation" && ev.WindowID == 1 && ev.Revision > 0 {
+			t.Fatalf("duplicate frame produced a spurious revision>0 event (should have been dropped, not re-solved): %+v", ev)
+		}
+	}
+	if got := countWindow1(); got != initialCount {
+		t.Fatalf("event count for window 1 changed after a duplicate: got %d, want %d (unchanged)", got, initialCount)
+	}
+}
+
+// TestE2E_SlowDriftKeyframe covers the ADR-009.c acceptance scenario as
+// literally specified (docs/SPEC.md, palimpsest_copilot_prompts_v3_full.md
+// Prompt 8): drift is caught at the keyframe substrate, at keyframe-cadence
+// latency. It requires the Finding-2 fix (Tracker.CurrentValues +
+// Predictor.LoadKeyframe at keyframe time) — a stale, never-refreshed
+// predictor baseline would make EvalKeyframe compare a frozen value
+// against itself and never fire.
+//
+// This does NOT also assert substrate (a) stays silent for the drifting
+// series. An earlier version of this test tried to engineer that (first
+// via a single isolated drifting series, then via ~1/3 of the fleet
+// drifting together to break FISTA's sparsity assumption per ADR-004's
+// storm cliff) and found empirically that this codebase's FISTA/debias
+// recovery is robust enough to still recover an accurate, low-residual
+// value even at k/m ratios past the informal "degrades above m/5" cliff —
+// meaning a real drift can legitimately be caught by *both* substrates
+// at once, which is a fine outcome (independent corroboration), not a
+// defect. Substrate (a) firing here is not itself wrong; it just isn't
+// what this test is gating on.
+func TestE2E_SlowDriftKeyframe(t *testing.T) {
+	const (
+		shardID        = uint64(7)
+		emitterID      = uint64(701)
+		viewID         = uint16(0)
+		m              = 300
+		d              = 6
+		bits           = 8
+		n              = 15
+		keyframeEvery  = 6
+		perWindowDelta = 2.0
+	)
+
+	cfg := Config{
+		TenantKey:        testTenantKey,
+		MaxResidual:      50.0,
+		AllowedLateness:  2,
+		RepairHorizon:    time.Minute,
+		EmittersExpected: 1,
+		FISTAIters:       200,
+		FISTALambda:      0.05,
+		FISTAPowerIters:  30,
+		FISTAThreshold:   0.3,
+		DriftThreshold:   5.0,
+	}
+	eng, sink, _, _, clock := newTestEngine(cfg)
+	enc := newTestEncoder(testTenantKey, shardID, emitterID, viewID, 0, m, d, bits, keyframeEvery, 1_000_000, time.Hour)
+
+	names := make([]string, n)
+	for i := range names {
+		names[i] = fmt.Sprintf("drift_quiet_%02d|shard=7|agg=sum", i)
+	}
+	driftName := "drift_moving|shard=7|agg=sum"
+	driftID := sketch.SeriesID([]byte(driftName))
+
+	valuesAt := func(window int) map[string]float64 {
+		v := constValues(names, 100.0)
+		v[driftName] = 100.0 + float64(window)*perWindowDelta
+		return v
+	}
+
+	seq := uint32(0)
+	step := func() {
+		eng.HandleFrame(ctx, enc.flush(clock.Now(), seq, valuesAt(int(seq)), false))
+		seq++
+		clock.Advance(10 * time.Second)
+	}
+
+	const windows = 19 // a bit over 3 keyframe cycles (keyframeEvery=6)
+	for i := 0; i < windows; i++ {
+		step()
+	}
+
+	var (
+		sawDrift       bool
+		sawDeviation   bool
+		firstHitWindow = uint32(windows)
+	)
+	for _, ev := range sink.Events() {
+		if ev.SeriesID != driftID {
+			continue
+		}
+		switch ev.Substrate {
+		case "deviation":
+			sawDeviation = true
+		case "keyframe":
+			sawDrift = true
+			if ev.WindowID < firstHitWindow {
+				firstHitWindow = ev.WindowID
+			}
+			wantMin := float64(keyframeEvery) * perWindowDelta * 0.5
+			if ev.Residual < wantMin {
+				t.Fatalf("keyframe drift event residual = %v, want >= %v (roughly keyframeEvery*perWindowDelta)", ev.Residual, wantMin)
+			}
+		}
+	}
+	if !sawDrift {
+		t.Fatalf("expected at least one substrate (c) keyframe drift event for the drifting series over %d windows (keyframe every %d)", windows, keyframeEvery)
+	}
+	if firstHitWindow > keyframeEvery {
+		t.Fatalf("first keyframe drift detection at window %d, want <= keyframe cadence (%d)", firstHitWindow, keyframeEvery)
+	}
+	if sawDeviation {
+		t.Logf("note: the drifting series was also independently caught by substrate (a) deviation — expected for an isolated k=1 signal (magnitude-independent sparse recovery), not a failure of this test")
+	}
+}

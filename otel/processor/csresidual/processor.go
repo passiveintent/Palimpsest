@@ -634,7 +634,7 @@ func (p *metricsProcessor) buildKeyframe(pl *pipeline, f *wire.Frame, forceGolde
 	pl.keyframeCount++
 
 	ids := pl.tracker.ActiveIDs()
-	values64 := pl.pred.LastWindowValues()
+	values64 := pl.tracker.CurrentValues()
 	values32 := make(map[uint64]float32, len(values64))
 	for id, v := range values64 {
 		values32[id] = float32(v)
@@ -658,6 +658,12 @@ func (p *metricsProcessor) buildKeyframe(pl *pipeline, f *wire.Frame, forceGolde
 		f.DictDeltas = dictDeltas
 	}
 	pl.prevKeyframeValues = values32
+	// ADR-003: a keyframe is the only steady-state point the open-loop
+	// predictor baseline is allowed to move. Refresh it to the true current
+	// value here, or residuals accumulate unbounded from birth forever
+	// instead of resetting each keyframe, and substrate (c) slow-drift
+	// detection (Matcher.EvalKeyframe) never sees a nonzero delta.
+	pl.pred.LoadKeyframe(values64)
 }
 
 func (p *metricsProcessor) buildFallback(pl *pipeline, f *wire.Frame, dictDeltas []wire.DictDelta) {

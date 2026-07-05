@@ -26,3 +26,10 @@ venv/
 *.swo
 .DS_Store
 Thumbs.db
+
+# demo/ runtime artifacts (docker compose writes these via bind mounts;
+# per-run output, not source)
+demo/frames/
+demo/out/
+demo/truth/
+demo/dist/

@@ -16,6 +16,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/gob"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -34,6 +35,7 @@ import (
 	"github.com/purushpsm147/palimpsest/internal/adapters/memstate"
 	"github.com/purushpsm147/palimpsest/internal/adapters/remoteprom"
 	"github.com/purushpsm147/palimpsest/internal/adapters/webhook"
+	"github.com/purushpsm147/palimpsest/internal/audit"
 	"github.com/purushpsm147/palimpsest/internal/core"
 	"github.com/purushpsm147/palimpsest/internal/forensics"
 	"github.com/purushpsm147/palimpsest/internal/metrics"
@@ -77,6 +79,9 @@ type flags struct {
 
 	snapshotTTL time.Duration
 	snapshotMax int
+
+	truthPath     string
+	auditInterval time.Duration
 }
 
 func parseFlags() flags {
@@ -109,6 +114,9 @@ func parseFlags() flags {
 
 	flag.DurationVar(&f.snapshotTTL, "snapshot-ttl", time.Hour, "forensic dashcam snapshot retention")
 	flag.IntVar(&f.snapshotMax, "snapshot-max", 10000, "forensic dashcam snapshot store capacity")
+
+	flag.StringVar(&f.truthPath, "truth", "", "path to a plsim-generated truth.jsonl; if set, scores emitted anomalies against it (internal/audit) and writes out-dir/audit_report.json")
+	flag.DurationVar(&f.auditInterval, "audit-interval", 10*time.Second, "how often to reload --truth (it may still be growing) and rewrite audit_report.json")
 
 	flag.Parse()
 	return f
@@ -145,6 +153,21 @@ func run() error {
 	var anomalySink ports.AnomalySink = anomalyJSONL
 	if f.webhookURL != "" {
 		anomalySink = fanoutAnomalySink{primary: anomalyJSONL, webhook: webhook.New(f.webhookURL)}
+	}
+
+	// --truth wires a Prompt-8 audit layer: every emitted anomaly is also
+	// scored against a plsim-generated ground-truth log (precision,
+	// recall, value MAPE, lifecycle false positives, detection latency,
+	// revision accuracy), published as expvar and periodically written to
+	// out-dir/audit_report.json.
+	var auditor *audit.Auditor
+	if f.truthPath != "" {
+		auditor, err = audit.NewAuditor(f.truthPath)
+		if err != nil {
+			return fmt.Errorf("loading --truth: %w", err)
+		}
+		auditor.Publish("palimpsest_audit")
+		anomalySink = audit.Sink{Next: anomalySink, Auditor: auditor}
 	}
 
 	var seriesSink ports.SeriesSink
@@ -226,7 +249,26 @@ func run() error {
 		}
 	}()
 
-	log.Printf("palimpsestd: started (frames-dir=%q allow-pull=%v http=%q out-dir=%q)", f.framesDir, f.allowPull, f.httpAddr, f.outDir)
+	if auditor != nil {
+		reportPath := filepath.Join(f.outDir, "audit_report.json")
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ticker := time.NewTicker(f.auditInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					writeAuditReport(auditor, f.truthPath, reportPath)
+					return
+				case <-ticker.C:
+					writeAuditReport(auditor, f.truthPath, reportPath)
+				}
+			}
+		}()
+	}
+
+	log.Printf("palimpsestd: started (frames-dir=%q allow-pull=%v http=%q out-dir=%q truth=%q)", f.framesDir, f.allowPull, f.httpAddr, f.outDir, f.truthPath)
 
 	<-ctx.Done()
 	log.Printf("palimpsestd: shutting down")
@@ -260,6 +302,30 @@ func (fo fanoutAnomalySink) EmitAnomaly(ctx context.Context, ev ports.AnomalyEve
 type heartbeat struct {
 	StartedAt  time.Time
 	LastSaveAt time.Time
+}
+
+// writeAuditReport reloads truthPath (a concurrently-running plsim may
+// still be appending to it) and writes a's current Report as JSON to
+// reportPath (temp file + rename, so a reader never sees a partial
+// write). Errors are logged, not fatal: a transient truth-file read
+// hiccup shouldn't crash the reconstructor.
+func writeAuditReport(a *audit.Auditor, truthPath, reportPath string) {
+	if err := a.Reload(truthPath); err != nil {
+		log.Printf("palimpsestd: reloading --truth %q: %v", truthPath, err)
+	}
+	b, err := json.MarshalIndent(a.Report(), "", "  ")
+	if err != nil {
+		log.Printf("palimpsestd: marshaling audit report: %v", err)
+		return
+	}
+	tmp := reportPath + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		log.Printf("palimpsestd: writing audit report: %v", err)
+		return
+	}
+	if err := os.Rename(tmp, reportPath); err != nil {
+		log.Printf("palimpsestd: renaming audit report into place: %v", err)
+	}
 }
 
 func saveHeartbeat(state *memstate.Store) {

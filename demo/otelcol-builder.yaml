@@ -1,0 +1,31 @@
+# ocb (OpenTelemetry Collector Builder) manifest for the optional
+# `otel` docker-compose profile: a real collector distribution built with
+# this repo's csresidual processor (otel/processor/csresidual), fed by the
+# collector's own hostmetrics receiver (real host CPU/memory/disk metrics
+# — no synthetic OTLP producer needed) in shadow mode.
+#
+# This is best-effort: collector-contrib component versions must match the
+# core collector version otel/go.mod is pinned to (v1.61.0 / v0.155.0) or
+# `builder` will fail to resolve dependencies. If component versions have
+# drifted since this was written, see demo/README.md's "otel profile"
+# section for how to adjust — the default `docker compose up` (no
+# --profile) does not depend on this building successfully.
+dist:
+  name: palimpsest-otelcol
+  description: OTel Collector distribution with the Palimpsest csresidual processor (demo, optional profile)
+  output_path: ./dist
+
+exporters:
+  - gomod: go.opentelemetry.io/collector/exporter/debugexporter v0.155.0
+
+receivers:
+  - gomod: go.opentelemetry.io/collector/receiver/otlpreceiver v0.155.0
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/hostmetricsreceiver v0.155.0
+
+processors:
+  - gomod: go.opentelemetry.io/collector/processor/batchprocessor v0.155.0
+  - gomod: github.com/purushpsm147/palimpsest/otel/processor/csresidual v0.0.0
+
+replaces:
+  - github.com/purushpsm147/palimpsest/otel => /src/otel
+  - github.com/purushpsm147/palimpsest => /src

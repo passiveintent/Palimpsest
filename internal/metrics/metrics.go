@@ -81,6 +81,7 @@ type Metrics struct {
 	breakerTrips      int64
 	clockSkewMs       *labeled // key: emitter -> latest skew (gauge)
 	lateFramesDropped int64
+	duplicateFramesDropped int64
 
 	scalarMu    sync.Mutex // guards the plain int64 scalar fields above
 	publishOnce sync.Once
@@ -200,6 +201,16 @@ func (m *Metrics) LateFramesDropped() int64 {
 	return m.getInt64(&m.lateFramesDropped)
 }
 
+// IncDuplicateFramesDropped records a RESIDUAL frame dropped because its
+// (view, window, emitter) had already contributed (ADR-013 dedup: a
+// repeated delivery of the same emitter's frame for a window it already
+// merged, as opposed to a different emitter's late-but-first contribution,
+// which is a repair, not a duplicate).
+func (m *Metrics) IncDuplicateFramesDropped() { m.addInt64(&m.duplicateFramesDropped, 1) }
+func (m *Metrics) DuplicateFramesDropped() int64 {
+	return m.getInt64(&m.duplicateFramesDropped)
+}
+
 // Publish registers m's counters under expvar at the given top-level name
 // (e.g. "palimpsest"). Safe to call more than once; only the first call
 // takes effect, matching expvar.Publish's "panics if name already
@@ -227,6 +238,7 @@ func (m *Metrics) Snapshot() map[string]any {
 		"breaker_trips":            m.BreakerTrips(),
 		"clock_skew_ms":            m.clockSkewMs.snapshot(),
 		"late_frames_dropped":      m.LateFramesDropped(),
+		"duplicate_frames_dropped": m.DuplicateFramesDropped(),
 	}
 }
 

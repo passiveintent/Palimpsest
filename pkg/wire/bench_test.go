@@ -59,6 +59,33 @@ func BenchmarkQuantize(b *testing.B) {
 	}
 }
 
+// BenchmarkEncode measures a full RESIDUAL frame encode at a realistic
+// m=2000 sketch width: Quantize the window's measurement vector, then
+// Marshal the resulting Frame — the two steps a RESIDUAL flush always
+// does together (docs/PERF.md's "bytes/flush at bits=8").
+func BenchmarkEncode(b *testing.B) {
+	y := make([]float64, 2000)
+	for i := range y {
+		y[i] = float64(i%37) - 18
+	}
+	f := baseFrame()
+	f.FrameType = FrameTypeResidual
+	f.M = uint32(len(y))
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		payload, err := Quantize(y, 8, 0.5)
+		if err != nil {
+			b.Fatal(err)
+		}
+		f.Payload = payload
+		if _, err := Marshal(f); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkDequantize(b *testing.B) {
 	values := make([]float64, 2048)
 	for i := range values {

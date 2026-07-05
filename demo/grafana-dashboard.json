@@ -1,0 +1,89 @@
+{
+  "title": "Palimpsest — Layer 1 Keyframe + Anomaly Detail",
+  "uid": "palimpsest-layer1",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "timezone": "browser",
+  "time": { "from": "now-15m", "to": "now" },
+  "refresh": "10s",
+  "templating": {
+    "list": [
+      {
+        "name": "logical_name",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "query": "label_values(palimpsest_logical_name)",
+        "refresh": 2,
+        "sort": 1,
+        "includeAll": false,
+        "multi": false
+      }
+    ]
+  },
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "type": "datasource",
+      "pluginId": "prometheus"
+    }
+  ],
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "How to read this dashboard",
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "markdown",
+        "content": "**Layer 1 (ADR-010/ADR-011)** is the exact, PromQL-queryable keyframe layer: palimpsestd writes every recovered/keyframe value for a logical series to Prometheus via remote-write, tagged with the `palimpsest_logical_name` label (see `internal/adapters/remoteprom`). The panel below plots one series' exact value over time as **points, not an interpolated line** — deliberately, because the *density* of points is itself informative:\n\n- During quiet windows, points land only at **keyframe cadence** (`keyframe_every` x `flush_interval` — a 60s grid at typical production settings; faster in this demo).\n- During a detected deviation, `solveWindow` additionally writes the **recovered value every flush** (`flush_interval`, ~10s) for as long as that series stays in the recovered support set.\n\nSo a sparse 60s grid that suddenly densifies to ~10s points *is* the anomaly detail overlay — no separate query or annotation channel is needed, because both layers share the same exact-value wire path (ADR-010's Layer 1) and the same PromQL series. Pick a series with `$logical_name` above; one with an injected anomaly, drift, or a hot instance (see `demo/README.md`) shows the effect most clearly."
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Layer 1 exact value — $logical_name",
+      "description": "Raw points (no interpolation): sparse = keyframe-cadence only (quiet), dense = recovered-value writes during a detected deviation (ADR-009/ADR-010).",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 5 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "points",
+            "pointSize": 6,
+            "lineInterpolation": "linear",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "{__name__=~\".+\", palimpsest_logical_name=\"$logical_name\"}",
+          "legendFormat": "{{palimpsest_logical_name}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "table",
+      "title": "Known series (label_values)",
+      "description": "Every palimpsest_logical_name Layer 1 has seen so far this session — pick one for the panel above.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 17 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "count by (palimpsest_logical_name) ({__name__=~\".+\", palimpsest_logical_name=~\".+\"})",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

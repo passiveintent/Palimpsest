@@ -1,0 +1,13 @@
+# Minimal Prometheus config for the demo. Layer-1 (exact keyframe) series
+# arrive via remote-write (palimpsestd's --remote-write-url), which requires
+# --web.enable-remote-write-receiver (set on the prometheus service's
+# command in docker-compose.yml) — this file doesn't need a remote_write
+# receiver section, that flag is what opens the receiving endpoint.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

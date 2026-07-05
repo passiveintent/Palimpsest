@@ -1,0 +1,67 @@
+# Runtime config for the optional `otel` docker-compose profile's
+# ocb-built collector: real host metrics (hostmetrics receiver, no
+# synthetic OTLP producer needed) through the csresidual processor in
+# shadow mode (metrics continue downstream unchanged, alongside the
+# sketched frames written to the shared volume), then a debug exporter so
+# `docker compose logs otel-collector` shows what the collector itself
+# saw. This is a secondary demonstration of the real ingestion path (ADR
+# -007) alongside plsim's direct generator; the default `docker compose
+# up` (no --profile) does not depend on this.
+receivers:
+  hostmetrics:
+    collection_interval: 10s
+    scrapers:
+      cpu:
+      memory:
+      disk:
+
+processors:
+  batch:
+  csresidual:
+    tenant_id: "palimpsest-demo"
+    tenant_key_env: PALIMPSEST_TENANT_KEY
+    logical_key: [state]
+    instance_key: [cpu, device]
+    aggregates: [sum, count, max]
+    m: 500
+    d: 6
+    bits: 8
+    flush_interval: 10s
+    keyframe_every: 6
+    keyframe_full_dict_every: 10
+    golden_keyframe_every: 10
+    epoch_rotate: 1h
+    series_ttl: 90s
+    storm:
+      energy_multiplier: 25
+      fallback_topk: 50
+    snapshot:
+      enabled: true
+      residual_threshold: 2.0
+      max_series_per_flush: 50
+      blob_ttl: 1h
+    ringbuffer:
+      window: 15m
+      max_instances_per_logical: 100
+      max_total_bytes: 10MB
+    churn:
+      max_births_per_logical_per_min: 100
+    pull:
+      enabled: false
+    tiers:
+      - match: '.*'
+        tier: sketched
+    shadow: true
+    output:
+      dir: /data/frames
+
+exporters:
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    metrics:
+      receivers: [hostmetrics]
+      processors: [csresidual, batch]
+      exporters: [debug]

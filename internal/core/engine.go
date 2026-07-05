@@ -386,13 +386,21 @@ func (e *Engine) handleResidual(ctx context.Context, shard *ShardState, view *Vi
 	}
 
 	win := view.getOrCreateWindow(f.Seq, int(f.M), int(f.D), int(f.Bits))
-	win.merge(f.EmitterID, y)
-	if len(f.SnapshotBlob) > 0 {
-		win.SnapshotBlobs = append(win.SnapshotBlobs, f.SnapshotBlob)
-	}
-
-	if ready || repair {
-		e.solveWindow(ctx, shard, view, win, now)
+	if win.Contributors[f.EmitterID] {
+		// ADR-013 dedup: this emitter already contributed to this window
+		// (a repeated delivery — network retry, or an out-of-order replay
+		// — never a legitimate second contribution: repair only ever
+		// means a *different* emitter's first-ever frame for this window
+		// arriving late). Merging again would double-count it.
+		e.metrics.IncDuplicateFramesDropped()
+	} else {
+		win.merge(f.EmitterID, y)
+		if len(f.SnapshotBlob) > 0 {
+			win.SnapshotBlobs = append(win.SnapshotBlobs, f.SnapshotBlob)
+		}
+		if ready || repair {
+			e.solveWindow(ctx, shard, view, win, now)
+		}
 	}
 
 	// A different window may have just become ready as a side effect of

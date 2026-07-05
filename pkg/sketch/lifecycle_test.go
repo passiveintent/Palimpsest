@@ -174,6 +174,45 @@ func TestTrackerLifecycle(t *testing.T) {
 	}
 }
 
+// TestTrackerCurrentValues asserts CurrentValues reflects the latest
+// observed raw value per active series (matching FullDict's InitValue
+// source), independent of what the Predictor's own (held) baseline says —
+// this is the source encode-side keyframe building must use to avoid
+// re-emitting a stale birth-time value (see pkg/predict.Predictor.LoadKeyframe).
+func TestTrackerCurrentValues(t *testing.T) {
+	pred := predict.NewHold()
+	tr := NewTracker(pred, nil)
+	now := time.Unix(0, 0)
+
+	idA, _, _ := tr.Observe([]byte("a|agg=sum"), 10, now)
+	idB, _, _ := tr.Observe([]byte("b|agg=sum"), 20, now)
+	tr.DrainDeltas()
+
+	if got := tr.CurrentValues(); len(got) != 2 || got[idA] != 10 || got[idB] != 20 {
+		t.Fatalf("CurrentValues after births = %v, want {%x:10, %x:20}", got, idA, idB)
+	}
+
+	// A later Observe moves CurrentValues but must NOT move the Predictor's
+	// held baseline (open-loop coding, ADR-003).
+	tr.Observe([]byte("a|agg=sum"), 17, now.Add(time.Second))
+	got := tr.CurrentValues()
+	if got[idA] != 17 {
+		t.Fatalf("CurrentValues[idA] = %v, want 17 (latest observed)", got[idA])
+	}
+	if got[idB] != 20 {
+		t.Fatalf("CurrentValues[idB] = %v, want 20 (untouched)", got[idB])
+	}
+	if v, ok := pred.Predict(idA); !ok || v != 10 {
+		t.Fatalf("predictor baseline for idA = (%v,%v), want (10,true) — CurrentValues must not affect it", v, ok)
+	}
+
+	// Tombstoned series drop out of CurrentValues.
+	tr.Expire(now.Add(time.Hour), time.Minute)
+	if got := tr.CurrentValues(); len(got) != 0 {
+		t.Fatalf("CurrentValues after Expire = %v, want empty", got)
+	}
+}
+
 func TestTrackerResetWindowClearsResidualsOnly(t *testing.T) {
 	pred := predict.NewHold()
 	tr := NewTracker(pred, nil)
