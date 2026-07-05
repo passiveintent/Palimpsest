@@ -1,0 +1,61 @@
+# Example NetworkPolicy for an agent running the otel/processor/csresidual
+# "csresidual" collector processor (ADR-012).
+#
+# Speculative push means the default posture needs zero ingress: frames
+# and snapshot blobs are pushed outbound to the collector/backend, and the
+# optional pull endpoint (GET /v1/instances, config `pull.enabled`) is off
+# by default. Apply the first policy unconditionally; only add the second
+# if you have deliberately set `pull.enabled: true` (which itself requires
+# mTLS + a bearer token, enforced by Config.Validate).
+#
+# See ../otel/processor/csresidual/README.md ("pull" config) and
+# ../docs/SECURITY.md for the full threat model this implements.
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: palimpsest-csresidual-deny-ingress
+  labels:
+    app: palimpsest-agent
+spec:
+  podSelector:
+    matchLabels:
+      app: palimpsest-agent
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: [] # no listening sockets by default (ADR-012); deny all ingress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: palimpsest-collector
+      ports:
+        - protocol: TCP
+          port: 4317 # OTLP receiver on the downstream collector
+
+---
+# Only needed if pull.enabled: true. Restricts inbound access to
+# pull.addr (default ":8889") to a named set of operator/debug-tooling
+# pods; the endpoint itself still requires mTLS + a bearer token even from
+# an allowed source, so this is defense in depth, not the only control.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: palimpsest-csresidual-allow-pull-from-debug-tools
+  labels:
+    app: palimpsest-agent
+spec:
+  podSelector:
+    matchLabels:
+      app: palimpsest-agent
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: palimpsest-debug-tools
+      ports:
+        - protocol: TCP
+          port: 8889 # pull.addr's port
