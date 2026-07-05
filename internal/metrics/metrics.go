@@ -7,6 +7,13 @@
 // global expvar registry; call Publish exactly once (from cmd/palimpsestd)
 // to expose it at /debug/vars. Tests read counters directly via the Get*
 // methods instead.
+/*
+ * Copyright (c) 2026 Purushottam <purushottam@passiveintent.dev>
+ *
+ * This source code is licensed under the AGPL-3.0-only license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 package metrics
 
 import (

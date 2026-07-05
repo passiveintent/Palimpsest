@@ -9,6 +9,13 @@
 // design decisions this package implements. Collector deps are confined
 // to this module (ADR-007): pkg/* (the core sketch/wire/predict math)
 // stays stdlib + xxhash only.
+/*
+ * Copyright (c) 2026 Purushottam <purushottam@passiveintent.dev>
+ *
+ * This source code is licensed under the AGPL-3.0-only license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 package csresidual
 
 import (

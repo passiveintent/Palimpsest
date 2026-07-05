@@ -5,6 +5,13 @@
 // storage). The protobuf WriteRequest and Snappy block-format encodings it
 // needs are hand-rolled in prompb.go/snappy.go rather than pulled in as
 // dependencies — see those files' doc comments.
+/*
+ * Copyright (c) 2026 Purushottam <purushottam@passiveintent.dev>
+ *
+ * This source code is licensed under the AGPL-3.0-only license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 package remoteprom
 
 import (

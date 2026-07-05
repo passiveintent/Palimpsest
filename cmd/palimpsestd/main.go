@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2026 Purushottam <purushottam@passiveintent.dev>
+ *
+ * This source code is licensed under the AGPL-3.0-only license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 // Command palimpsestd is Palimpsest's hexagonal reconstructor: it consumes
 // wire frames from one or more sources, reconstructs per-shard state
 // (internal/core), and routes anomalies/recovered series to the configured

@@ -4,6 +4,13 @@
 // rename-into-place sequence so a crash mid-write never corrupts the
 // on-disk snapshot; Load reads from memory only (call LoadFromDisk once at
 // startup to repopulate it from a prior snapshot).
+/*
+ * Copyright (c) 2026 Purushottam <purushottam@passiveintent.dev>
+ *
+ * This source code is licensed under the AGPL-3.0-only license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 package memstate
 
 import (

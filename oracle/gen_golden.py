@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Purushottam <purushottam@passiveintent.dev>
+#
+# This source code is licensed under the AGPL-3.0-only license found in the
+# LICENSE file in the root directory of this source tree.
+
 """Generates testdata/golden/* from palimpsest_ref.py (docs/SPEC.md, ADR-008
 through ADR-013). Python is truth: Go's pkg/sketch and pkg/wire golden tests
 must reproduce every vector this script writes, byte-for-byte.

@@ -5,6 +5,13 @@
 // See ADR-006 (wire format), ADR-008 (dict deltas / dict root), ADR-011
 // (KDELTA delta-coded keyframes), ADR-012 (snapshot blobs), and ADR-013
 // (emitter_id, window-indexed seq).
+/*
+ * Copyright (c) 2026 Purushottam <purushottam@passiveintent.dev>
+ *
+ * This source code is licensed under the AGPL-3.0-only license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
 package wire
 
 import "errors"
