@@ -11,12 +11,7 @@
 // series, and held for retrieval — beating a 15-minute polling SLA to a
 // ring buffer that would otherwise have already rotated past the incident
 // by the time anyone thought to look.
-/*
- * Copyright (c) 2026 Purushottam <purushottam@passiveintent.dev>
- *
- * This source code is licensed under the AGPL-3.0-only license found in the
- * LICENSE file in the root directory of this source tree.
- */
+
 
 package forensics
 

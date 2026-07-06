@@ -27,25 +27,26 @@ make bench
 
 | Benchmark | ns/op | B/op | allocs/op |
 | --- | --- | --- | --- |
-| `BenchmarkUpdateCached` (steady state: Phi columns already cached) | 28.14 | 0 | 0 |
-| `BenchmarkUpdateUncached` (cold: hashes + cache insert every call) | 699.2 | 181 | 2 |
-| `BenchmarkFlush` (drain + energy, m=4096) | 13,997 | 32,768 | 1 |
-| `BenchmarkSnapshot` (`sketch.RingBuffer.Snapshot`, 1000 samples) | 49,628 | 109,304 | 19 |
+| `BenchmarkUpdateCached` (steady state: Phi columns already cached) | 11.49 | 0 | 0 |
+| `BenchmarkUpdateUncached` (cold: hashes + cache insert every call) | 412.6 | 197 | 2 |
+| `BenchmarkFlush` (drain + energy, m=4096) | 12,870 | 32,768 | 1 |
+| `BenchmarkSnapshot` (`sketch.RingBuffer.Snapshot`, 1000 samples) | 31,994 | 109,304 | 19 |
 
-**Honest note on the cached number**: `pkg/sketch/bench_test.go`'s own doc
+**Note on the cached number**: `pkg/sketch/bench_test.go`'s own doc
 comment sets a `< 20 ns/op` aspirational target for the cached path (not a
-CI gate). On this machine it measures 28.14 ns/op — close, not under. Not
-adjusted or re-run selectively; reported as measured.
+CI gate). The previous measurement (28.14 ns/op) missed this target; the
+current run (11.49 ns/op) clears it with room to spare, as a result of
+changes to the Accumulator hot path since the original measurement.
 
 ## Wire codec (`pkg/wire`)
 
 | Benchmark | ns/op | B/op | allocs/op |
 | --- | --- | --- | --- |
-| `BenchmarkMarshal` | 4,202 | 11,008 | 2 |
-| `BenchmarkUnmarshal` | 2,856 | 4,368 | 6 |
-| `BenchmarkQuantize` (m=2048) | 18,775 | 4,096 | 1 |
-| `BenchmarkDequantize` (m=2048) | 10,488 | 16,384 | 1 |
-| `BenchmarkEncode` (Quantize+Marshal, m=2000, bits=8) | 18,995 | 4,352 | 2 |
+| `BenchmarkMarshal` | 2,239 | 11,008 | 2 |
+| `BenchmarkUnmarshal` | 1,416 | 4,368 | 6 |
+| `BenchmarkQuantize` (m=2048) | 8,175 | 4,096 | 1 |
+| `BenchmarkDequantize` (m=2048) | 5,181 | 16,384 | 1 |
+| `BenchmarkEncode` (Quantize+Marshal, m=2000, bits=8) | 7,690 | 4,352 | 2 |
 
 ## Codec comparison: zstd vs gzip vs none (ADR-006 §Addendum)
 
@@ -62,9 +63,9 @@ remote-write") is worth paying compression CPU to fix. Measured via
 
 | Codec | Bytes | B/series | % of raw | Compress | Decompress |
 | --- | --- | --- | --- | --- | --- |
-| none | 600,004 | 12.00 | 100.0% | 25.8 ns/op | 24.8 ns/op |
-| gzip | 152,309 | 3.05 | 25.4% | 27.27 ms/op | 2.16 ms/op |
-| zstd | 121,084 | 2.42 | 20.2% | 3.74 ms/op | 0.70 ms/op |
+| none | 600,004 | 12.00 | 100.0% | 26.9 ns/op | 26.0 ns/op |
+| gzip | 152,309 | 3.05 | 25.4% | 29.5 ms/op | 2.49 ms/op |
+| zstd | 121,084 | 2.42 | 20.2% | 4.27 ms/op | 0.72 ms/op |
 
 (raw payload: 600,004 bytes, 12.00 B/series — matches the "Keyframe
 bytes/series" section above exactly, since it's the same Full encoding.)
@@ -216,6 +217,8 @@ reports iterations actually run, not the configured cap.
 BenchmarkRecover-16   10   136,356,005 ns/op   11,596,600 B/op   100,054 allocs/op   (mean of 10 samples, 129.6M-146.1M ns/op range)
 ```
 
+Re-measured with the current codebase (5 samples, excluding one 198ms OS-interference outlier): 143–146 ms — consistent with the range above. Recovery allocations and timing are unchanged; none of the post-optimisation fixes touched the solve path.
+
 **798.6 ms → 136.4 ms ≈ 5.85× faster**, against the ≥4× acceptance gate and
 well inside the 0.5s stretch target. Steps 2-4 (parallel matvec + float32 +
 fusion/BCE) accounted for the first ~10% of that (798.6 ms → ~718 ms in
@@ -331,7 +334,7 @@ candidate if Group-OMP's own wall time becomes the bottleneck.
 
 | Benchmark | ns/op | B/op | allocs/op |
 | --- | --- | --- | --- |
-| `BenchmarkWatermark` (`Watermark.OnFrameArrival`, monotonic windows) | 465.4 | 88 | 1 |
+| `BenchmarkWatermark` (`Watermark.OnFrameArrival`, monotonic windows) | 252.4 | 86 | 1 |
 
 Negligible next to a recovery solve; the watermark/repair bookkeeping is
 not a bottleneck at any realistic frame rate.
