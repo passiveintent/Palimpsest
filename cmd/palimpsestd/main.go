@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -32,6 +33,7 @@ import (
 	"github.com/passiveintent/Palimpsest/internal/adapters/fswatch"
 	"github.com/passiveintent/Palimpsest/internal/adapters/httpsrc"
 	"github.com/passiveintent/Palimpsest/internal/adapters/jsonl"
+	"github.com/passiveintent/Palimpsest/internal/adapters/kafka"
 	"github.com/passiveintent/Palimpsest/internal/adapters/memstate"
 	"github.com/passiveintent/Palimpsest/internal/adapters/remoteprom"
 	"github.com/passiveintent/Palimpsest/internal/adapters/webhook"
@@ -55,6 +57,10 @@ type flags struct {
 	fswatchPollInterval time.Duration
 	httpAddr            string
 	allowPull           bool
+
+	kafkaBrokers string
+	kafkaTopic   string
+	kafkaGroup   string
 
 	outDir         string
 	webhookURL     string
@@ -90,6 +96,10 @@ func parseFlags() flags {
 	flag.DurationVar(&f.fswatchPollInterval, "frames-poll-interval", time.Second, "poll interval for --frames-dir")
 	flag.StringVar(&f.httpAddr, "http", ":8080", "listen address for the httpsrc POST /v1/frames endpoint and /debug/vars (only opened if --allow-pull)")
 	flag.BoolVar(&f.allowPull, "allow-pull", false, "open a listening HTTP socket to receive speculatively-pushed frames (ADR-012: zero listening sockets by default; fswatch via --frames-dir is the safe default ingestion path)")
+
+	flag.StringVar(&f.kafkaBrokers, "kafka-brokers", "", "comma-separated Kafka seed broker addresses; if set, palimpsestd also consumes frames from --kafka-topic as a consumer group (internal/adapters/kafka.Source, ADR-013 at-least-once: redelivery is deduped by the per-window contributor ledger, not by Kafka)")
+	flag.StringVar(&f.kafkaTopic, "kafka-topic", "palimpsest-frames", "Kafka topic to consume wire frames from (only used if --kafka-brokers is set)")
+	flag.StringVar(&f.kafkaGroup, "kafka-group", "palimpsestd", "Kafka consumer group name (only used if --kafka-brokers is set)")
 
 	flag.StringVar(&f.outDir, "out-dir", "", "directory for JSON-lines anomaly/series output (required)")
 	flag.StringVar(&f.webhookURL, "webhook", "", "if set, also POST each anomaly event to this URL")
@@ -132,8 +142,8 @@ func run() error {
 	if f.outDir == "" {
 		return fmt.Errorf("--out-dir is required")
 	}
-	if !f.allowPull && f.framesDir == "" {
-		return fmt.Errorf("no frame source configured: set --frames-dir and/or --allow-pull")
+	if !f.allowPull && f.framesDir == "" && f.kafkaBrokers == "" {
+		return fmt.Errorf("no frame source configured: set --frames-dir, --allow-pull, and/or --kafka-brokers")
 	}
 	if err := os.MkdirAll(f.outDir, 0o755); err != nil {
 		return fmt.Errorf("creating --out-dir %q: %w", f.outDir, err)
@@ -220,6 +230,18 @@ func run() error {
 	if f.allowPull {
 		sources = append(sources, httpsrc.New(f.httpAddr))
 	}
+	if f.kafkaBrokers != "" {
+		src, err := kafka.NewSource(kafka.SourceConfig{
+			Brokers: strings.Split(f.kafkaBrokers, ","),
+			Topic:   f.kafkaTopic,
+			Group:   f.kafkaGroup,
+			OnError: func(err error) { log.Printf("palimpsestd: kafka source: %v", err) },
+		})
+		if err != nil {
+			return fmt.Errorf("configuring --kafka-brokers: %w", err)
+		}
+		sources = append(sources, src)
+	}
 
 	var wg sync.WaitGroup
 	errCh := make(chan error, len(sources))
@@ -268,7 +290,8 @@ func run() error {
 		}()
 	}
 
-	log.Printf("palimpsestd: started (frames-dir=%q allow-pull=%v http=%q out-dir=%q truth=%q)", f.framesDir, f.allowPull, f.httpAddr, f.outDir, f.truthPath)
+	log.Printf("palimpsestd: started (frames-dir=%q allow-pull=%v http=%q kafka-brokers=%q kafka-topic=%q kafka-group=%q out-dir=%q truth=%q)",
+		f.framesDir, f.allowPull, f.httpAddr, f.kafkaBrokers, f.kafkaTopic, f.kafkaGroup, f.outDir, f.truthPath)
 
 	<-ctx.Done()
 	log.Printf("palimpsestd: shutting down")

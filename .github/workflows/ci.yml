@@ -13,7 +13,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.25'
           cache: true
           cache-dependency-path: |
             go.sum
@@ -32,3 +32,9 @@ jobs:
       - name: go test -race (otel module)
         working-directory: otel
         run: go test -race ./...
+
+      - name: benchmark regression smoke (pkg/recover)
+        # Non-race: -race's instrumentation overhead (5-20x) would make
+        # this wall-clock comparison meaningless. See
+        # pkg/recover/bench_regression_test.go and testdata/bench_baseline.txt.
+        run: go test -run TestBenchmarkRecoverRegression -v ./pkg/recover/...

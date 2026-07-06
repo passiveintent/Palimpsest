@@ -158,7 +158,9 @@ type metricsProcessor struct {
 }
 
 // newMetricsProcessor builds a metricsProcessor from cfg. sink may be nil,
-// in which case a fileFrameSink rooted at cfg.Output.Dir is used.
+// in which case cfg.Output.Type selects the default: a fileFrameSink rooted
+// at cfg.Output.Dir (the "file" default, preserving pre-existing behavior),
+// or a kafkaFrameSink built from cfg.Output.Kafka ("kafka").
 func newMetricsProcessor(cfg *Config, logger *zap.Logger, sink frameSink) (*metricsProcessor, error) {
 	var tenantKey []byte
 	var keyRing sketch.KeyRing
@@ -191,7 +193,16 @@ func newMetricsProcessor(cfg *Config, logger *zap.Logger, sink frameSink) (*metr
 		return nil, err
 	}
 	if sink == nil {
-		sink = &fileFrameSink{dir: cfg.Output.Dir}
+		switch resolveOutputType(cfg) {
+		case outputTypeKafka:
+			ks, err := newKafkaFrameSink(cfg.Output.Kafka, cfg.TenantID)
+			if err != nil {
+				return nil, err
+			}
+			sink = ks
+		default:
+			sink = &fileFrameSink{dir: cfg.Output.Dir}
+		}
 	}
 	return &metricsProcessor{
 		cfg:              cfg,
@@ -225,6 +236,9 @@ func (p *metricsProcessor) start(_ context.Context, _ component.Host) error {
 		if err := os.MkdirAll(fs.dir, 0o755); err != nil {
 			return fmt.Errorf("csresidual: creating output.dir %q: %w", fs.dir, err)
 		}
+	}
+	if ks, ok := p.sink.(*kafkaFrameSink); ok {
+		ks.startDrainLoop(p.cfg.Output.Kafka.DrainInterval)
 	}
 
 	if p.cfg.Pull.Enabled {
@@ -267,6 +281,11 @@ func (p *metricsProcessor) shutdown(ctx context.Context) error {
 	}
 	p.wg.Wait()
 	p.flushAll(p.now())
+	if ks, ok := p.sink.(*kafkaFrameSink); ok {
+		if err := ks.close(); err != nil {
+			p.logger.Error("csresidual: closing kafka output", zap.Error(err))
+		}
+	}
 	return nil
 }
 

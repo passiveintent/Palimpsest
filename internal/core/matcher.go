@@ -53,6 +53,7 @@ func (m *Matcher) EvalDeviation(res recover.Result) []ports.AnomalyEvent {
 			Coverage:      res.Coverage,
 			CoverageTotal: res.CoverageTotal,
 			Revision:      res.Revision,
+			MergedTrust:   res.MergedTrust,
 		})
 	}
 	return events

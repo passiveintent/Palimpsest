@@ -29,6 +29,20 @@ const (
 	ConfidenceFallback       = "fallback"
 )
 
+// MergedTrust values a Result may carry (ADR-015): whether the ADR-015
+// scaling-law guardrail found this window's cross-emitter fusion
+// statistically justified. This is independent of Confidence, which keeps
+// reporting which recovery mode actually ran regardless of MergedTrust —
+// Recover/RecoverGroup never set this field themselves (they have no
+// notion of which view is merged tier); it is left zero-valued until a
+// caller (internal/core.Engine) stamps it after the guardrail is
+// evaluated against that window's live coverage/support/dictionary size.
+const (
+	MergedTrustProven   = "proven"   // guardrail ratio >= MinSignalRatio
+	MergedTrustUnproven = "unproven" // guardrail ratio < MinSignalRatio; result still emitted, not suppressed
+	MergedTrustNA       = "na"       // not a merged-tier view; guardrail does not apply
+)
+
 // fistaMaxIters mirrors the Python conformance oracle's FISTA_MAX_ITERS
 // cap (oracle/palimpsest_ref.py: "FISTA Iters cap is 350 per SPEC").
 const fistaMaxIters = 350
@@ -76,6 +90,15 @@ type Options struct {
 	// during escalation. nil uses DefaultGrouper(). Ignored when
 	// EscalateThreshold is 0.
 	Grouper Grouper
+
+	// ObjectiveCheckEvery controls how often (every N iterations) fista
+	// pays for the extra MulTransposeIntoAdd + F(x_new) evaluation that
+	// both the best-seen restart criterion (ADR-014) and the early-exit
+	// criterion (Prompt 12 step 5) need — one matvec, shared by both
+	// features, on checked iterations only (Addendum A2). <= 0 uses the
+	// default of 5, matching the early-exit streak window
+	// (defaultObjectiveCheckEvery).
+	ObjectiveCheckEvery int
 }
 
 // Result is a single Recover call's outcome.
@@ -89,8 +112,9 @@ type Result struct {
 	CoverageTotal int    // emitters expected (ADR-013)
 	Revision      int    // 0 for initial, incremented on repair (ADR-013)
 	Iters         int
-	Restarts      int // function-value restarts fired (ADR-014)
-	RawSupport    int // len(support) before M/10 cap; used for escalation-size check
+	Restarts      int    // function-value restarts fired (ADR-014)
+	RawSupport    int    // len(support) before M/10 cap; used for escalation-size check
+	MergedTrust   string // "" | "na" | "unproven" | "proven" (ADR-015); stamped by the caller, not by Recover itself
 }
 
 // Recover runs FISTA basis-pursuit-denoising recovery
@@ -147,7 +171,14 @@ func Recover(y []float64, dict *Dictionary, p sketch.Params, o Options) (Result,
 	// lamOverL ∈ [0.01, 0.05] at typical problem scales (SPEC §Recovery).
 	lambdaAbs := scaledLambda(csr, y, o.Lambda, n)
 
-	x, xRestarts := fista(csr, y, lambdaAbs, o.Iters, o.PowerIters)
+	// pool parallelizes every MulInto/MulTransposeInto this solve makes
+	// (FISTA's iteration loop, the Lipschitz power iteration, and — if
+	// escalation fires below — Group-OMP's residual scan) across
+	// GOMAXPROCS goroutines. Built once per solve and reused throughout.
+	pool := newMatvecPool(csr)
+	defer pool.Close()
+
+	x, xRestarts, xIters := fista(pool, y, lambdaAbs, o.Iters, o.PowerIters, o.ObjectiveCheckEvery)
 
 	// ompContextCap (M/5): plain-support context passed to Group-OMP. Larger
 	// than the plain-path cap so cross-talk-boosted AZ members do not displace
@@ -200,7 +231,10 @@ func Recover(y []float64, dict *Dictionary, p sketch.Params, o Options) (Result,
 		// Use ompContextCap (M/5) as OMP working set — wider than the plain-path
 		// cap so cross-talk-boosted AZ members don't crowd out scattered singletons.
 		ompRows := cappedSupport(x, o.Threshold, p.M/ompContextCap)
-		gr, gerr := RecoverGroupOMP(y, dict, p, grouper, x, ompRows, xRestarts, o)
+		// Reuse this call's pool/csr (Group-OMP's residual scan is one more
+		// MulInto — Addendum A3) instead of the exported RecoverGroupOMP,
+		// which would rebuild both from scratch.
+		gr, gerr := recoverGroupOMP(pool, csr, y, dict, p, grouper, x, ompRows, xRestarts, xIters, o)
 		if gerr == nil && gr.Residual < plainResidual {
 			return gr, nil
 		}
@@ -214,7 +248,7 @@ func Recover(y []float64, dict *Dictionary, p sketch.Params, o Options) (Result,
 		Coverage:      present,
 		CoverageTotal: total,
 		Revision:      o.Revision,
-		Iters:         o.Iters,
+		Iters:         xIters,
 		Restarts:      xRestarts,
 		RawSupport:    rawSupportLen,
 	}, nil
@@ -229,25 +263,64 @@ func Recover(y []float64, dict *Dictionary, p sketch.Params, o Options) (Result,
 // while catching genuine objective regressions from momentum overshoot.
 const restartRelTol = 1e-6
 
+// defaultObjectiveCheckEvery is Options.ObjectiveCheckEvery's default.
+const defaultObjectiveCheckEvery = 5
+
+// earlyExitStreak is K in "stop when relative objective change < 1e-6 for
+// K iters" (Prompt 12 step 5): the number of consecutive CHECKED
+// iterations (ObjectiveCheckEvery apart, not consecutive raw iterations)
+// that must show a small change before fista stops early. Requiring a
+// streak (not just one small reading) guards against a single
+// coincidentally-flat checked iteration mid-convergence.
+const earlyExitStreak = 5
+
+// earlyExitRelTol is the relative objective-change threshold for early
+// exit (Prompt 12 step 5).
+const earlyExitRelTol = 1e-6
+
 // fista runs the FISTA iteration for min_x 0.5||y-Phi x||^2 + lambdaAbs||x||_1
-// over csr (Phi^T) with best-seen prox-iterate restart (ADR-014 §3).
-// After each proximal step, F(x_new) is evaluated (one extra MulVec) and
-// compared against F_best.  If F(x_new) > F_best*(1+restartRelTol), the
-// momentum has overshot; reset t=1, z=x_new, F_best=F(x_new).
-// Otherwise update normally and F_best=min(F_best, F(x_new)).
+// over pool (wrapping Phi^T) with best-seen prox-iterate restart (ADR-014
+// §3) and early-exit (Prompt 12 step 5). F(x_new) is expensive (one extra
+// MulTransposeIntoAdd), so it is evaluated only every objectiveCheckEvery
+// iterations (<=0 uses defaultObjectiveCheckEvery), serving both features
+// from that single evaluation (Addendum A2):
+//
+//   - Best-seen restart: fires iff F(x_new) > F_best*(1+restartRelTol) on
+//     a checked iteration. On fire: reset t=1, z=x_new, F_best=F(x_new).
+//     Otherwise F_best=min(F_best, F(x_new)).
+//   - Early exit: stops once earlyExitStreak consecutive checked
+//     iterations each show |relative change| < earlyExitRelTol versus the
+//     previous checked value.
+//
+// Unchecked iterations run the plain FISTA momentum update (no restart
+// decision is possible without F(x_new) that iteration). Returns the
+// recovered x, the restart count, and the number of iterations actually
+// run (<= iters; Result.Iters reports this).
 // Guardrail: no allocation inside the iteration loop.
-func fista(csr *CSR, y []float64, lambdaAbs float64, iters, powerIters int) ([]float64, int) {
-	n, m := csr.NRows, csr.NCols
-	L := estimateLipschitz(csr, powerIters)
+func fista(pool *matvecPool, y []float64, lambdaAbs float64, iters, powerIters, objectiveCheckEvery int) ([]float64, int, int) {
+	n, m := pool.csr.NRows, pool.csr.NCols
+	L := estimateLipschitz(pool, powerIters)
 	lamOverL := lambdaAbs / L
+
+	if objectiveCheckEvery <= 0 {
+		objectiveCheckEvery = defaultObjectiveCheckEvery
+	}
 
 	x := make([]float64, n)
 	z := make([]float64, n)
 	xNew := make([]float64, n)
 	grad := make([]float64, n)
-	phiZ := make([]float64, m)
-	phiXNew := make([]float64, m) // Phi @ x_new (for F(x_new) restart check)
-	resid := make([]float64, m)
+	resid := make([]float64, m) // fused: seeded with -y, then scatter-added into (Prompt 12 step 4)
+	dNew := make([]float64, m)  // same fusion, for the shared objective check
+
+	// negY seeds resid/dNew each iteration so MulTransposeIntoAdd's
+	// scatter accumulates directly into Phi@v - y, fusing what would
+	// otherwise be a separate O(m) subtraction pass over a freshly
+	// zeroed-then-scattered buffer into one O(m) copy + scatter-add.
+	negY := make([]float64, m)
+	for i, yi := range y {
+		negY[i] = -yi
+	}
 
 	// F(0) = 0.5*||y||^2 (x=0 initial).
 	var fBest float64
@@ -255,26 +328,42 @@ func fista(csr *CSR, y []float64, lambdaAbs float64, iters, powerIters int) ([]f
 		fBest += yi * yi
 	}
 	fBest *= 0.5
+	fLastChecked := fBest
+	var smallStreak int
 
 	t := 1.0
-	var restarts int
+	var restarts, used int
 	for iter := 0; iter < iters; iter++ {
-		csr.MulTransposeInto(z, phiZ) // phiZ = Phi @ z
-		for i := range resid {
-			resid[i] = phiZ[i] - y[i]
-		}
-		csr.MulInto(resid, grad) // grad = Phi^T @ resid
+		used = iter + 1
+		copy(resid, negY)
+		pool.MulTransposeIntoAdd(z, resid) // resid = Phi@z - y
+		pool.MulInto(resid, grad)          // grad = Phi^T @ resid
 
 		for i := 0; i < n; i++ {
 			xNew[i] = softThreshold(z[i]-grad[i]/L, lamOverL)
 		}
 
-		// Compute F(x_new) = 0.5*||y-Phi x_new||^2 + lambda*||x_new||_1
-		// (one extra MulVec per iteration for the restart check).
-		csr.MulTransposeInto(xNew, phiXNew)
+		// Only checked iterations pay for F(x_new); the last iteration is
+		// always checked so a run that hits the iters cap still reports
+		// an up-to-date restart/objective state.
+		checked := used%objectiveCheckEvery == 0 || iter == iters-1
+		if !checked {
+			tNew := (1 + math.Sqrt(1+4*t*t)) / 2
+			coeff := (t - 1) / tNew
+			for i := 0; i < n; i++ {
+				zi := xNew[i] + coeff*(xNew[i]-x[i])
+				x[i] = xNew[i]
+				z[i] = zi
+			}
+			t = tNew
+			continue
+		}
+
+		// Compute F(x_new) = 0.5*||y-Phi x_new||^2 + lambda*||x_new||_1.
+		copy(dNew, negY)
+		pool.MulTransposeIntoAdd(xNew, dNew) // dNew = Phi@x_new - y
 		var fNew float64
-		for i := range y {
-			d := y[i] - phiXNew[i]
+		for _, d := range dNew {
 			fNew += d * d
 		}
 		fNew *= 0.5
@@ -310,8 +399,25 @@ func fista(csr *CSR, y []float64, lambdaAbs float64, iters, powerIters int) ([]f
 				fBest = fNew
 			}
 		}
+
+		// Early exit: earlyExitStreak consecutive checked iterations with
+		// small relative change versus the previous checked value.
+		denom := math.Abs(fLastChecked)
+		if denom == 0 {
+			denom = 1
+		}
+		if math.Abs(fLastChecked-fNew)/denom < earlyExitRelTol {
+			smallStreak++
+			if smallStreak >= earlyExitStreak {
+				fLastChecked = fNew
+				break
+			}
+		} else {
+			smallStreak = 0
+		}
+		fLastChecked = fNew
 	}
-	return x, restarts
+	return x, restarts, used
 }
 
 // softThreshold is the proximal operator of the L1 norm.
@@ -332,8 +438,8 @@ func softThreshold(v, thresh float64) float64 {
 // deterministic (powerIterSeed): power iteration converges to the top
 // eigenvector from any generic starting point given enough iterations, so
 // determinism here costs nothing in practice.
-func estimateLipschitz(csr *CSR, powerIters int) float64 {
-	n, m := csr.NRows, csr.NCols
+func estimateLipschitz(pool *matvecPool, powerIters int) float64 {
+	n, m := pool.csr.NRows, pool.csr.NCols
 	rng := rand.New(rand.NewSource(powerIterSeed))
 	v := make([]float64, n)
 	for i := range v {
@@ -351,8 +457,8 @@ func estimateLipschitz(csr *CSR, powerIters int) float64 {
 	}
 
 	for iter := 0; iter < powerIters; iter++ {
-		csr.MulTransposeInto(v, tmp) // tmp = Phi @ v
-		csr.MulInto(tmp, av)         // av = Phi^T Phi v
+		pool.MulTransposeInto(v, tmp) // tmp = Phi @ v
+		pool.MulInto(tmp, av)         // av = Phi^T Phi v
 		norm = l2norm(av)
 		if norm == 0 {
 			return 1
@@ -361,8 +467,8 @@ func estimateLipschitz(csr *CSR, powerIters int) float64 {
 			v[i] = av[i] / norm
 		}
 	}
-	csr.MulTransposeInto(v, tmp)
-	csr.MulInto(tmp, av)
+	pool.MulTransposeInto(v, tmp)
+	pool.MulInto(tmp, av)
 	var rayleigh float64
 	for i := range v {
 		rayleigh += v[i] * av[i]
@@ -386,7 +492,7 @@ func reconstructInto(csr *CSR, support []int, values []float64, out []float64) {
 			continue
 		}
 		for k := csr.RowPtr[row]; k < csr.RowPtr[row+1]; k++ {
-			out[csr.ColIdx[k]] += csr.Vals[k] * v
+			out[csr.ColIdx[k]] += float64(csr.Vals[k]) * v
 		}
 	}
 }

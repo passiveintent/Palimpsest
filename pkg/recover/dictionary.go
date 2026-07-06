@@ -141,8 +141,8 @@ func (dict *Dictionary) BuildCSR(seed uint64, m, d int) *CSR {
 	n := len(ids)
 	rowPtr := make([]int32, n+1)
 	colIdx := make([]int32, n*d)
-	vals := make([]float64, n*d)
-	invSqrtD := 1 / math.Sqrt(float64(d))
+	vals := make([]float32, n*d)
+	invSqrtD := float32(1 / math.Sqrt(float64(d)))
 
 	for i, id := range ids {
 		entry := dict.active[id]

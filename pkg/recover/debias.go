@@ -30,7 +30,7 @@ func debias(csr *CSR, y []float64, support []int, ridge float64) []float64 {
 	for si, row := range support {
 		var bs float64
 		for kk := csr.RowPtr[row]; kk < csr.RowPtr[row+1]; kk++ {
-			bs += csr.Vals[kk] * y[csr.ColIdx[kk]]
+			bs += float64(csr.Vals[kk]) * y[csr.ColIdx[kk]]
 		}
 		b[si] = bs
 	}
@@ -57,10 +57,10 @@ func dotRows(csr *CSR, r1, r2 int) float64 {
 	var sum float64
 	for k1 := csr.RowPtr[r1]; k1 < csr.RowPtr[r1+1]; k1++ {
 		c1 := csr.ColIdx[k1]
-		v1 := csr.Vals[k1]
+		v1 := float64(csr.Vals[k1])
 		for k2 := csr.RowPtr[r2]; k2 < csr.RowPtr[r2+1]; k2++ {
 			if csr.ColIdx[k2] == c1 {
-				sum += v1 * csr.Vals[k2]
+				sum += v1 * float64(csr.Vals[k2])
 				break
 			}
 		}

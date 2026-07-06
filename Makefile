@@ -1,4 +1,4 @@
-.PHONY: tidy test race bench lint golden
+.PHONY: tidy test race bench lint golden kafka-integration
 
 tidy:
 	go mod tidy
@@ -8,7 +8,7 @@ test:
 
 race:
 	@if [ "$(GOOS)" = "windows" ] || [ "$$(go env GOOS)" = "windows" ]; then \
-		echo "⚠️  Skipping -race on Windows (requires cgo + MinGW GCC; code has no goroutines)"; \
+		echo "⚠️  Skipping -race on Windows (requires cgo + MinGW GCC, not available by default here); run it in CI or a Linux/WSL/Docker shell instead"; \
 		go test ./...; \
 	else \
 		go test -race ./...; \
@@ -31,3 +31,12 @@ golden:
 	# (BLAS backends differ in low-order bits; _canon rounds to 1e-9 for
 	# stability — see docs/adr/ADR-001).
 	cd oracle && python3 gen_golden.py --out ../testdata/golden
+
+kafka-integration:
+	# internal/adapters/kafka's build-tag=integration suite against a real,
+	# single-node Kafka (see demo/docker-compose.yml's "kafka" profile and
+	# demo/README.md's Kafka section) rather than the in-memory fake broker
+	# the normal `make test` already covers.
+	cd demo && docker compose --profile kafka up -d kafka
+	go test -tags integration ./internal/adapters/kafka/... -run TestIntegration -v
+	cd demo && docker compose --profile kafka down

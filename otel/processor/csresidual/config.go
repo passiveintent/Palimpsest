@@ -89,7 +89,33 @@ type PullConfig struct {
 
 // OutputConfig configures where flushed frames are written.
 type OutputConfig struct {
-	Dir string `mapstructure:"dir"`
+	// Type selects the frame sink: "file" (the default; also implied by
+	// leaving Type unset) writes one file per frame under Dir, exactly as
+	// before this field existed. "kafka" instead publishes frames to a
+	// Kafka topic (KafkaOutputConfig) via internal/adapters/kafka, behind a
+	// bounded on-disk spool (KafkaOutputConfig.SpoolDir) that absorbs broker
+	// outages and drains once the broker is reachable again.
+	Type  string            `mapstructure:"type"`
+	Dir   string            `mapstructure:"dir"`
+	Kafka KafkaOutputConfig `mapstructure:"kafka"`
+}
+
+// KafkaOutputConfig configures the "kafka" OutputConfig.Type. Frames are
+// keyed by tenant_id||shard_id (internal/adapters/kafka.PartitionKey) using
+// Config.TenantID, so ordering within one shard's stream is preserved
+// end-to-end regardless of how many other shards/views share the topic.
+type KafkaOutputConfig struct {
+	Brokers []string `mapstructure:"brokers"`
+	Topic   string   `mapstructure:"topic"`
+
+	// SpoolDir buffers frames on disk whenever a publish attempt fails
+	// (broker unreachable), and is drained — oldest frame first — on every
+	// subsequent publish attempt and on DrainInterval's own ticker, so a
+	// quiet (shard, view) pipeline's backlog still flushes promptly after
+	// the broker reconnects even without new frames of its own to flush.
+	SpoolDir      string        `mapstructure:"spool_dir"`
+	SpoolMaxBytes string        `mapstructure:"spool_max_bytes"`
+	DrainInterval time.Duration `mapstructure:"drain_interval"`
 }
 
 // Config is the csresidual processor configuration. See README.md for the
@@ -301,11 +327,46 @@ func (cfg *Config) Validate() error {
 		}
 	}
 
-	if cfg.Output.Dir == "" {
-		errs = append(errs, errors.New("output.dir is required"))
+	switch cfg.Output.Type {
+	case "", outputTypeFile:
+		if cfg.Output.Dir == "" {
+			errs = append(errs, errors.New("output.dir is required when output.type is \"file\" (or unset)"))
+		}
+	case outputTypeKafka:
+		k := cfg.Output.Kafka
+		if len(k.Brokers) == 0 {
+			errs = append(errs, errors.New("output.kafka.brokers is required when output.type is \"kafka\""))
+		}
+		if k.Topic == "" {
+			errs = append(errs, errors.New("output.kafka.topic is required when output.type is \"kafka\""))
+		}
+		if k.SpoolDir == "" {
+			errs = append(errs, errors.New("output.kafka.spool_dir is required when output.type is \"kafka\" (bounds the broker-outage backlog to disk)"))
+		}
+		if _, err := parseByteSize(k.SpoolMaxBytes); err != nil {
+			errs = append(errs, fmt.Errorf("output.kafka.spool_max_bytes: %w", err))
+		}
+		requirePositiveDur(k.DrainInterval, "output.kafka.drain_interval")
+	default:
+		errs = append(errs, fmt.Errorf("output.type: unknown value %q (want \"file\" or \"kafka\")", cfg.Output.Type))
 	}
 
 	return errors.Join(errs...)
+}
+
+// Output.Type values.
+const (
+	outputTypeFile  = "file"
+	outputTypeKafka = "kafka"
+)
+
+// resolveOutputType returns cfg.Output.Type, defaulting an unset value to
+// "file" (the behavior before OutputConfig.Type existed).
+func resolveOutputType(cfg *Config) string {
+	if cfg.Output.Type == "" {
+		return outputTypeFile
+	}
+	return cfg.Output.Type
 }
 
 // viewSpec is a resolved, indexed view: either every entry of cfg.Views (in

@@ -182,6 +182,54 @@ you, `docker compose build otel-collector` will show exactly which module
 resolution step broke; that's the place to bump
 a version pin.
 
+## Kafka transport (optional)
+
+`internal/adapters/kafka` is an alternative to the default fswatch
+(shared-filesystem) transport between an agent and `palimpsestd`: a
+`ports.FrameSource` (consumer group) and a `ports.FrameSink` (producer),
+plus a `SpoolingSink` that gives `otel/processor/csresidual`'s `output.type:
+kafka` a bounded on-disk backlog across broker outages. It ships with its
+own unit tests (an in-memory fake broker, no docker needed —
+`go test ./internal/adapters/kafka/...` runs these as part of the normal
+suite) and a separate `integration` build-tag suite that needs a real
+broker:
+
+```bash
+docker compose --profile kafka up -d kafka
+go test -tags integration ./internal/adapters/kafka/... -run TestIntegration -v
+docker compose --profile kafka down
+```
+
+The `kafka` profile is a single-node KRaft cluster (no ZooKeeper),
+reachable from the host at `localhost:9094`; override the address with
+`KAFKA_INTEGRATION_BROKERS` if you're pointing the tests at a different
+cluster. These tests cover, over a real broker: per-partition (per-shard)
+ordering, at-least-once redelivery deduped by ADR-013's contributor ledger,
+and a simulated broker outage whose spooled backlog drains and repairs
+(`revision>0`) correctly once "reconnected" (see
+`internal/adapters/kafka/integration_test.go`'s package doc for exactly what
+"simulated" means there, and why — the short version: fast and deterministic
+beats literally blocking a test run for real).
+
+To watch a longer, literal outage against the compose `kafka` service
+itself (rather than the integration test's own faster simulation) — e.g. to
+reproduce the "2-minute broker outage" scenario end to end with a real
+container, mirroring the `PLSIM_PARTITION=2m` recipe above but for the
+Kafka transport instead of fswatch — point an `output.type: kafka`
+`csresidual` config (see `otel/processor/csresidual/README.md`) or
+`palimpsestd --kafka-brokers=localhost:9094` at the `kafka` profile, then:
+
+```bash
+docker compose --profile kafka stop kafka
+sleep 120
+docker compose --profile kafka start kafka
+```
+
+Frames produced during the outage should appear on disk under the
+producer's `output.kafka.spool_dir`, then drain (and, on the decode side,
+repair any windows already recovered from other emitters) once the broker
+is back.
+
 ## Cleaning up
 
 ```bash

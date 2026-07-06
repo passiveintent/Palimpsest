@@ -108,6 +108,22 @@ func TestConfigValidate_Fields(t *testing.T) {
 			c.Views = []ViewConfig{{Name: "v1", Labels: []string{"a"}}, {Name: "v1", Labels: []string{"b"}}}
 		}, "duplicate view name"},
 		{"missing output dir", func(c *Config) { c.Output.Dir = "" }, "output.dir is required"},
+		{"unknown output type", func(c *Config) { c.Output.Type = "sqs" }, `unknown value "sqs"`},
+		{"kafka missing brokers", func(c *Config) {
+			c.Output = OutputConfig{Type: "kafka", Kafka: KafkaOutputConfig{Topic: "t", SpoolDir: "/tmp/spool", SpoolMaxBytes: "100MB", DrainInterval: time.Second}}
+		}, "output.kafka.brokers is required"},
+		{"kafka missing topic", func(c *Config) {
+			c.Output = OutputConfig{Type: "kafka", Kafka: KafkaOutputConfig{Brokers: []string{"b:9092"}, SpoolDir: "/tmp/spool", SpoolMaxBytes: "100MB", DrainInterval: time.Second}}
+		}, "output.kafka.topic is required"},
+		{"kafka missing spool_dir", func(c *Config) {
+			c.Output = OutputConfig{Type: "kafka", Kafka: KafkaOutputConfig{Brokers: []string{"b:9092"}, Topic: "t", SpoolMaxBytes: "100MB", DrainInterval: time.Second}}
+		}, "output.kafka.spool_dir is required"},
+		{"kafka invalid spool_max_bytes", func(c *Config) {
+			c.Output = OutputConfig{Type: "kafka", Kafka: KafkaOutputConfig{Brokers: []string{"b:9092"}, Topic: "t", SpoolDir: "/tmp/spool", SpoolMaxBytes: "lots", DrainInterval: time.Second}}
+		}, "output.kafka.spool_max_bytes"},
+		{"kafka drain_interval not positive", func(c *Config) {
+			c.Output = OutputConfig{Type: "kafka", Kafka: KafkaOutputConfig{Brokers: []string{"b:9092"}, Topic: "t", SpoolDir: "/tmp/spool", SpoolMaxBytes: "100MB"}}
+		}, "output.kafka.drain_interval must be positive"},
 	}
 
 	for _, tt := range tests {
@@ -122,6 +138,32 @@ func TestConfigValidate_Fields(t *testing.T) {
 				t.Fatalf("error = %q, want substring %q", err.Error(), tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestConfigValidate_KafkaOutputValid(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.Output = OutputConfig{
+		Type: "kafka",
+		Kafka: KafkaOutputConfig{
+			Brokers:       []string{"broker1:9092", "broker2:9092"},
+			Topic:         "palimpsest-frames",
+			SpoolDir:      t.TempDir(),
+			SpoolMaxBytes: "1GB",
+			DrainInterval: 10 * time.Second,
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected a fully-specified kafka output config to pass, got: %v", err)
+	}
+}
+
+func TestResolveOutputType(t *testing.T) {
+	if got := resolveOutputType(&Config{}); got != outputTypeFile {
+		t.Fatalf("resolveOutputType(unset) = %q, want %q", got, outputTypeFile)
+	}
+	if got := resolveOutputType(&Config{Output: OutputConfig{Type: "kafka"}}); got != outputTypeKafka {
+		t.Fatalf("resolveOutputType(kafka) = %q, want %q", got, outputTypeKafka)
 	}
 }
 

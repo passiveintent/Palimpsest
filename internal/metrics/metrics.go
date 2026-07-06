@@ -91,6 +91,8 @@ type Metrics struct {
 	duplicateFramesDropped int64
 	keyringMiss            int64 // frames gated because key_version not in KeyRing (ADR-012)
 
+	mergedWindows *labeled // key: trust ("proven"|"unproven"|"na") -> count (ADR-015)
+
 	scalarMu    sync.Mutex // guards the plain int64 scalar fields above
 	publishOnce sync.Once
 }
@@ -104,6 +106,7 @@ func New() *Metrics {
 		anomaliesFired:          newLabeled(),
 		snapshotsLatencySeconds: newLabeled(),
 		clockSkewMs:             newLabeled(),
+		mergedWindows:           newLabeled(),
 	}
 }
 
@@ -228,6 +231,15 @@ func (m *Metrics) KeyringMisses() int64 {
 	return m.getInt64(&m.keyringMiss)
 }
 
+// IncMergedWindows records one merged-tier window solve's ADR-015 trust
+// guardrail verdict (trust is recover.MergedTrustProven/Unproven; callers
+// never record MergedTrustNA here since evaluateMergedTrust only calls this
+// for views declared merged tier).
+func (m *Metrics) IncMergedWindows(trust string) { m.mergedWindows.add(trust, 1) }
+func (m *Metrics) MergedWindows(trust string) int64 {
+	return m.mergedWindows.get(trust)
+}
+
 // Publish registers m's counters under expvar at the given top-level name
 // (e.g. "palimpsest"). Safe to call more than once; only the first call
 // takes effect, matching expvar.Publish's "panics if name already
@@ -257,6 +269,7 @@ func (m *Metrics) Snapshot() map[string]any {
 		"late_frames_dropped":      m.LateFramesDropped(),
 		"duplicate_frames_dropped": m.DuplicateFramesDropped(),
 		"keyring_miss":             m.KeyringMisses(),
+		"merged_windows":           m.mergedWindows.snapshot(),
 	}
 }
 

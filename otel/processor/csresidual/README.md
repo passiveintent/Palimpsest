@@ -6,7 +6,9 @@ high-cardinality metric residuals into small linear measurements
 per-series-billed backend. It implements ADR-005, ADR-007, ADR-008,
 ADR-009, ADR-010, ADR-011, ADR-012, and ADR-013 from the Palimpsest repo
 root (`../../docs/adr/`); `../../docs/SPEC.md` is the normative wire/math
-spec this package encodes against.
+spec this package encodes against. ADR-015 (merged tier) touches only the
+`merged` tier's config validity here — its actual policy logic is entirely
+decode-side (`internal/core`).
 
 This module (`github.com/passiveintent/Palimpsest/otel`) is intentionally
 separate from the root `github.com/passiveintent/Palimpsest` module
@@ -41,9 +43,20 @@ this module isn't published standalone) stay stdlib + xxhash only.
    crash-looping pipeline to aggregate-only buffering; a snapshot stager
    (ADR-009/ADR-012) attaches a gzip instance-ring-buffer blob to the frame
    when a logical series' local z-score crosses `snapshot.residual_threshold`.
-6. Writes each frame to `output.dir` as one file
-   (`emitter<hex>-shard<hex>-epoch<hex>-view<hex>-seq<hex>.plmp`), unless a
-   custom `frameSink` is wired in (as the test suite does, in-memory).
+6. Writes each frame out via `output.type` (`file`, the default, or
+   `kafka`), unless a custom `frameSink` is wired in (as the test suite
+   does, in-memory). `file` writes one file per frame under `output.dir`
+   (`emitter<hex>-shard<hex>-epoch<hex>-view<hex>-seq<hex>.plmp`). `kafka`
+   publishes to `output.kafka.topic` via `internal/adapters/kafka`, keyed by
+   `tenant_id||shard_id` so one shard's frames land on one partition and are
+   delivered in order (ADR-013 doesn't need cross-partition ordering: it
+   keys recovery state on `(emitter_id, epoch, seq)` inside the frame, never
+   on transport arrival order); a publish failure spools the frame to
+   `output.kafka.spool_dir` (bounded by `spool_max_bytes`) instead of
+   dropping it, and every subsequent publish attempt — plus a
+   `drain_interval` background tick, so a quiet pipeline's backlog doesn't
+   wait on new traffic — drains that backlog, oldest frame first, once the
+   broker is reachable again.
 
 ## Building a collector with this processor (OCB)
 
@@ -165,13 +178,23 @@ processors:
     tiers:                                 # ADR-005; first match wins, default sketched, summaries always exact
       - match: '^billing_.*'
         tier: exact
+      - match: '^fleetwide_.*'
+        tier: merged                       # sketched identically to `sketched` here (ADR-015: no agent-side
+                                            # behavior change) -- see the merged-tier note below
       - match: '.*'
         tier: sketched
 
     shadow: false                          # true: sketched-tier datapoints also continue downstream unchanged
                                             # false: they're removed from the pipeline (now represented by frames only)
     output:
-      dir: /var/lib/palimpsest/frames
+      type: file                           # "file" (default) or "kafka"
+      dir: /var/lib/palimpsest/frames       # used when type: file
+      kafka:                               # used when type: kafka
+        brokers: ["kafka-0:9092", "kafka-1:9092"]
+        topic: palimpsest-frames
+        spool_dir: /var/lib/palimpsest/kafka-spool   # bounded on-disk backlog for broker outages
+        spool_max_bytes: 1GB
+        drain_interval: 10s                # background retry tick, independent of flush_interval
 ```
 
 ### Notes
@@ -182,6 +205,14 @@ processors:
   ground truth downstream). In `shadow: false` (the cost-saving mode),
   they're removed once sketched — only `exact`-tier data and emitted
   frames represent them from that point on.
+- **`output.type: kafka`** depends on `github.com/twmb/franz-go` (chosen
+  over `segmentio/kafka-go` for its idempotent-by-default producer and
+  consumer-group manual-offset-commit support — see
+  `internal/adapters/kafka`'s package doc at the repo root for the full
+  justification) — pulled in transitively via this module's dependency on
+  the root module's `internal/adapters/kafka` package. This is the "deps in
+  otel module are acceptable" case ADR-007 draws a line around: the line is
+  `pkg/*` staying stdlib + xxhash, not this module.
 - **Views and shards are fully independent state.** Each (shard, view)
   pair gets its own `Tracker`/`Accumulator`/dictionary/ring buffers/churn
   breaker; nothing sums or leaks across them (ADR-010, ADR-012).
@@ -194,6 +225,19 @@ processors:
 - **Tenant key and pull bearer token are read from the environment named
   by `tenant_key_env` / `pull.bearer_token_env`, never from YAML** —
   keeping secrets out of config files and collector logs (ADR-012).
+- **`merged` tier (ADR-015) is agent-side-invisible.** A metric routed to
+  `merged` is sketched exactly like `sketched` here — the trust-guardrail
+  policy that makes cross-emitter fusion a safe product feature lives
+  entirely on the decode side (`internal/core.Config.MergedViews`, keyed by
+  `ViewID`). To dedicate a view to merged-tier traffic, give it its own
+  `views` entry and configure a matching `MergedPolicy` at the same `ViewID`
+  index on the decoder — the same implicit position-based correlation every
+  other declared view already relies on. The one thing this ADR asks of a
+  fleet-wide config: every emitter contributing to a merged-tier view must
+  share the same `m`/`d`/`active_key_version` (a differing value builds an
+  incompatible `Phi` or seed, making "summing" meaningless) — in the normal
+  single-collector-config-per-fleet deployment shape, this is already
+  guaranteed by construction, not something to configure separately.
 
 ## Package layout
 

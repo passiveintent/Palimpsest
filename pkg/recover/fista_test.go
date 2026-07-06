@@ -19,6 +19,45 @@ func defaultTestOptions() Options {
 	return Options{Iters: 200, Lambda: 0.05, PowerIters: 40, Threshold: 0.3}
 }
 
+// TestRestartFiresWithObjectiveCheckEvery is Addendum A2's regression
+// fixture: amortizing F(x_new) to once every ObjectiveCheckEvery
+// iterations (instead of every iteration) must not silently disable the
+// best-seen restart criterion (ADR-014 §3) it shares an evaluation with.
+// recovery_case1.json's plain solve is known to trigger the restart a
+// couple of times (momentum overshoot on its k=50 sparse signal); this
+// asserts that still happens with ObjectiveCheckEvery explicitly set to
+// its default, and that recall/RMSE stay within the golden tolerances.
+func TestRestartFiresWithObjectiveCheckEvery(t *testing.T) {
+	var f recoveryCase1File
+	loadGoldenJSON(t, "recovery_case1.json", &f)
+
+	dict := NewDictionary()
+	for _, name := range f.Names {
+		nb := []byte(name)
+		dict.ApplyDelta(wire.DictDelta{ID: sketch.SeriesID(nb), Name: nb})
+	}
+	dict.ObserveEmitter(1)
+
+	params := sketch.Params{M: f.M, D: f.D, Seed: f.Seed}
+	opts := Options{
+		Iters: f.Iters, Lambda: f.Lambda, PowerIters: f.PowerIters,
+		Threshold: f.Threshold, EmittersExpected: 1,
+		ObjectiveCheckEvery: 5, // explicit K=5, matching the addendum's default
+	}
+
+	res, err := Recover(f.Y, dict, params, opts)
+	if err != nil {
+		t.Fatalf("Recover: %v", err)
+	}
+	if res.Restarts < 1 {
+		t.Fatalf("Restarts = %d, want >= 1 (checking every %d iters must not suppress the restart criterion)",
+			res.Restarts, opts.ObjectiveCheckEvery)
+	}
+	checkRecallAndRMSE(t, "restart_objective_check_every", f.Support, res, 0.95, 0.05)
+	t.Logf("ObjectiveCheckEvery=%d: restarts=%d iters=%d residual=%.4f",
+		opts.ObjectiveCheckEvery, res.Restarts, res.Iters, res.Residual)
+}
+
 // TestRecoverCoverageZeroGated is the ADR-013 acceptance fixture: a
 // recovery window where no emitter has been observed yet must gate to
 // ConfidenceFallback without misreporting a solved result.

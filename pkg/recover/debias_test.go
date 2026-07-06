@@ -50,7 +50,7 @@ func TestDebiasOrthogonalColumns(t *testing.T) {
 		NCols:  3,
 		RowPtr: []int32{0, 1, 2},
 		ColIdx: []int32{0, 1},
-		Vals:   []float64{1.0, 1.0},
+		Vals:   []float32{1.0, 1.0},
 	}
 	y := []float64{3.0, -2.0, 0.0}
 
@@ -67,7 +67,7 @@ func TestDebiasOrthogonalColumns(t *testing.T) {
 }
 
 func TestDebiasEmptySupport(t *testing.T) {
-	csr := &CSR{NRows: 1, NCols: 1, RowPtr: []int32{0, 1}, ColIdx: []int32{0}, Vals: []float64{1.0}}
+	csr := &CSR{NRows: 1, NCols: 1, RowPtr: []int32{0, 1}, ColIdx: []int32{0}, Vals: []float32{1.0}}
 	values := debias(csr, []float64{1.0}, nil, 1e-6)
 	if values == nil || len(values) != 0 {
 		t.Fatalf("debias with empty support = %v, want empty non-nil slice", values)

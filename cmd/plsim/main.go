@@ -83,6 +83,14 @@ type flags struct {
 	// recommended for the default demo story.
 	noise            float64
 	anomalyMagnitude float64
+
+	// mergedEmitters (0 disables) simulates the ADR-015 merged-tier
+	// scenario: a correlated group + scattered singletons fused across
+	// this many weak observers at per-agent SNR ~1.0, independent of the
+	// disjoint-group --emitters sharding demo above. See cmd/plsim/merged.go.
+	mergedEmitters  int
+	mergedGroupSize int
+	mergedScattered int
 }
 
 func parseFlags() flags {
@@ -121,6 +129,10 @@ func parseFlags() flags {
 	flag.Float64Var(&f.baseline, "baseline", 100.0, "steady-state per-instance value")
 	flag.Float64Var(&f.noise, "noise", 0, "uniform random per-instance read noise amplitude; nonzero values are not recommended (see README note on this flag)")
 	flag.Float64Var(&f.anomalyMagnitude, "anomaly-magnitude", 60.0, "absolute value added to an injected anomaly's target aggregate")
+
+	flag.IntVar(&f.mergedEmitters, "merged-emitters", 0, "ADR-015: simulate this many weak-observer emitters fusing a correlated-group anomaly at per-agent SNR ~1.0 into one shared view; 0 disables (independent of --emitters' disjoint-group sharding)")
+	flag.IntVar(&f.mergedGroupSize, "merged-group-size", 500, "ADR-015 merged-tier scenario: correlated-group member count (AZ-outage shape, ignored if --merged-emitters is 0)")
+	flag.IntVar(&f.mergedScattered, "merged-scattered", 20, "ADR-015 merged-tier scenario: scattered singleton anomaly count (ignored if --merged-emitters is 0)")
 
 	flag.Parse()
 	return f
@@ -175,6 +187,27 @@ func run() error {
 		if err := truth.Write(ev); err != nil {
 			return err
 		}
+	}
+
+	var (
+		merged        *mergedSim
+		mergedChannel *channel
+	)
+	if f.mergedEmitters > 0 {
+		merged = newMergedSim(mergedSimConfig{
+			TenantKey: tenantKey, ShardID: f.shardID, M: f.m, D: f.d, Bits: f.bits,
+			KeyframeEvery: f.keyframeEvery, GoldenEvery: f.goldenEvery, SeriesTTL: f.seriesTTL,
+			GroupSize: f.mergedGroupSize, Scattered: f.mergedScattered, Emitters: f.mergedEmitters,
+			InjectedWindow: uint32(f.windows * 2 / 5), Seed: f.seed,
+		})
+		mergedChannel = newChannel(f.framesOut, 0, 0, 0, rand.New(rand.NewSource(f.seed+1_000_000)))
+		for _, ev := range merged.TruthEvents(runStart, f.interval) {
+			if err := truth.Write(ev); err != nil {
+				return err
+			}
+		}
+		log.Printf("plsim: merged-tier scenario armed (emitters=%d group-size=%d scattered=%d injected-window=%d view-id=%d)",
+			f.mergedEmitters, f.mergedGroupSize, f.mergedScattered, merged.cfg.InjectedWindow, mergedTierViewID)
 	}
 
 	viewNames := parseViews(f.views)
@@ -273,6 +306,12 @@ func run() error {
 				if err := channels[e].Send(frame); err != nil {
 					log.Printf("plsim: emitter %d view %d: %v", e, v, err)
 				}
+			}
+		}
+
+		if merged != nil {
+			if err := merged.Step(window, wnow, mergedChannel); err != nil {
+				log.Printf("plsim: merged-tier scenario: %v", err)
 			}
 		}
 

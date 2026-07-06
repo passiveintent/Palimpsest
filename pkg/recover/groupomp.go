@@ -95,21 +95,30 @@ func RecoverGroup(y []float64, dict *Dictionary, p sketch.Params, grouper Groupe
 	// singletons from the working set (see fista.go for the rationale comment).
 	const ompContextCap = 5
 
+	// pool parallelizes this call's matvecs (fista's iteration loop plus,
+	// below, Group-OMP's own residual scan reuses the same workers —
+	// Addendum A3) across GOMAXPROCS goroutines.
+	pool := newMatvecPool(csr)
+	defer pool.Close()
+
 	// Run plain FISTA to get the initial context support for Group-OMP.
 	// Use M/ompContextCap (not M/escalationCap) so scattered singletons are not
 	// displaced by AZ-group members whose FISTA amplitudes are cross-talk boosted.
 	// The M/escalationCap escalation trigger in Recover() is separate from this cap.
 	lambdaAbs := scaledLambda(csr, y, o.Lambda, n)
-	x, xRestarts := fista(csr, y, lambdaAbs, o.Iters, o.PowerIters)
+	x, xRestarts, xIters := fista(pool, y, lambdaAbs, o.Iters, o.PowerIters, o.ObjectiveCheckEvery)
 	plainRows := cappedSupport(x, o.Threshold, p.M/ompContextCap)
 
-	return RecoverGroupOMP(y, dict, p, grouper, x, plainRows, xRestarts, o)
+	return recoverGroupOMP(pool, csr, y, dict, p, grouper, x, plainRows, xRestarts, xIters, o)
 }
 
-// RecoverGroupOMP is the Group-OMP core, called by the escalation path in
-// Recover() with a pre-computed plain-LASSO solution (avoids re-running FISTA).
-// plainX is the raw FISTA iterate, plainRows are the capped support row indices,
-// plainRestarts is the restart count from the plain FISTA solve.
+// RecoverGroupOMP is the public Group-OMP entry point: given a pre-computed
+// plain-LASSO solution (plainX/plainRows/plainRestarts/plainIters, avoiding
+// a re-run of FISTA), it builds its own CSR/matvec pool and runs the
+// Group-OMP core. Recover's escalation path and RecoverGroup both already
+// have a pool built for their own FISTA solve, so they call the unexported
+// recoverGroupOMP directly to reuse it instead of paying for a second CSR
+// build.
 func RecoverGroupOMP(
 	y []float64,
 	dict *Dictionary,
@@ -118,6 +127,33 @@ func RecoverGroupOMP(
 	plainX []float64,
 	plainRows []int,
 	plainRestarts int,
+	plainIters int,
+	o Options,
+) (Result, error) {
+	csr := dict.BuildCSR(p.Seed, p.M, p.D)
+	pool := newMatvecPool(csr)
+	defer pool.Close()
+	return recoverGroupOMP(pool, csr, y, dict, p, grouper, plainX, plainRows, plainRestarts, plainIters, o)
+}
+
+// recoverGroupOMP is the Group-OMP core (ADR-014 kill criterion, Prompt 11c):
+// build the debiased residual from the plain-LASSO support, activate groups
+// by the H0-calibrated score test, LS-refit. Compared to the abandoned
+// group-FISTA path (see ADR-014 §Negative result), Group-OMP is immune to
+// the block-threshold momentum latch and 10-50x faster. pool/csr must be
+// built from the same CSR (pool wraps csr); callers that already hold both
+// from their own FISTA solve pass them through here to avoid rebuilding.
+func recoverGroupOMP(
+	pool *matvecPool,
+	csr *CSR,
+	y []float64,
+	dict *Dictionary,
+	p sketch.Params,
+	grouper Grouper,
+	plainX []float64,
+	plainRows []int,
+	plainRestarts int,
+	plainIters int,
 	o Options,
 ) (Result, error) {
 	if grouper == nil {
@@ -125,7 +161,6 @@ func RecoverGroupOMP(
 	}
 
 	present, total := dict.Coverage(o.EmittersExpected)
-	csr := dict.BuildCSR(p.Seed, p.M, p.D)
 	ids := dict.ActiveIDs()
 	n := csr.NRows
 
@@ -175,12 +210,23 @@ func RecoverGroupOMP(
 		r[i] = y[i] - r[i]
 	}
 
+	// rowScores[i] = Phi_i^T r, i.e. exactly one row of MulInto(r, ·).
+	// Addendum A3: the per-group score loop below needs this dot product
+	// for every candidate row across all groups — which, summed over the
+	// whole partition, is one full Phi^T r pass. Computing it once via the
+	// pool's parallel row-range gather (the same workers fista's gradient
+	// step uses) replaces what used to be a serial per-group inline loop
+	// with a single reused parallel matvec.
+	rowScores := make([]float64, n)
+
 	for round := 0; round < maxOmpRounds; round++ {
 		rNorm := l2norm(r)
 		sigmaHat := rNorm / math.Sqrt(float64(p.M))
 		if sigmaHat == 0 {
 			break // residual is zero; perfect fit
 		}
+
+		pool.MulInto(r, rowScores)
 
 		// In round 0, only check large groups (|g| >= minGroupSize) to avoid
 		// false alarms from the AZ-group cross-talk noise floor swamping the
@@ -217,18 +263,15 @@ func RecoverGroupOMP(
 			}
 
 			// Compute ‖Φ_gᵀ r‖₂: only over NEW (not-yet-in-union) rows so
-			// already-explained rows don't contaminate the score.
+			// already-explained rows don't contaminate the score. rowScores
+			// was precomputed once for all rows this round (see above).
 			var normSq float64
 			var newRows int
 			for _, i := range g.rows {
 				if _, inUnion := unionRowSet[i]; inUnion {
 					continue
 				}
-				var dot float64
-				for k := csr.RowPtr[i]; k < csr.RowPtr[i+1]; k++ {
-					dot += csr.Vals[k] * r[csr.ColIdx[k]]
-				}
-				normSq += dot * dot
+				normSq += rowScores[i] * rowScores[i]
 				newRows++
 			}
 			if newRows == 0 {
@@ -294,7 +337,7 @@ func RecoverGroupOMP(
 		Coverage:      present,
 		CoverageTotal: total,
 		Revision:      o.Revision,
-		Iters:         o.Iters,
+		Iters:         plainIters,
 		Restarts:      plainRestarts,
 		RawSupport:    len(unionRows),
 	}, nil
@@ -352,4 +395,74 @@ func cappedSupport(x []float64, threshold float64, capSize int) []int {
 	}
 	sortInts(capped)
 	return capped
+}
+
+// GroupZScore computes groupID's H0-calibrated z-score (ADR-014/Prompt 11c
+// acceptance criterion (c): "how many standard deviations above the
+// null-hypothesis mean does this group's residual-correlation score sit")
+// against y's plain-path diagnostic residual — the same M/escalationCap
+// context Group-OMP's own round-0 score test uses. Exported for
+// observability: a caller that already escalated via Recover can log this
+// alongside Result.GroupIDs to report detection confidence, without
+// re-running FISTA/debias itself. Returns 0 if the dictionary is empty,
+// groupID has no members, or the diagnostic residual is exactly zero
+// (a perfect fit has no meaningful z-score).
+func GroupZScore(y []float64, dict *Dictionary, p sketch.Params, grouper Grouper, groupID uint64, o Options) float64 {
+	if grouper == nil {
+		grouper = DefaultGrouper()
+	}
+	csr := dict.BuildCSR(p.Seed, p.M, p.D)
+	n := csr.NRows
+	if n == 0 {
+		return 0
+	}
+	ids := dict.ActiveIDs()
+
+	lambdaAbs := scaledLambda(csr, y, o.Lambda, n)
+	pool := newMatvecPool(csr)
+	defer pool.Close()
+	x, _, _ := fista(pool, y, lambdaAbs, o.Iters, o.PowerIters, o.ObjectiveCheckEvery)
+
+	// ompContextCap (M/5): the same diagnostic context recoverGroupOMP's
+	// round-0 test scans (wider than the plain-path M/10 cap so
+	// cross-talk-boosted group members don't crowd out the residual this
+	// score is measured against).
+	const ompContextCap = 5
+	diagRows := cappedSupport(x, o.Threshold, p.M/ompContextCap)
+	diagVals := debias(csr, y, diagRows, debiasRidge)
+	r := make([]float64, p.M)
+	reconstructInto(csr, diagRows, diagVals, r)
+	for i := range r {
+		r[i] = y[i] - r[i]
+	}
+	rNorm := l2norm(r)
+	sigmaHat := rNorm / math.Sqrt(float64(p.M))
+	if sigmaHat == 0 {
+		return 0
+	}
+
+	var rows []int
+	for i, id := range ids {
+		if grouper(id, dict) == groupID {
+			rows = append(rows, i)
+		}
+	}
+	if len(rows) == 0 {
+		return 0
+	}
+
+	var normSq float64
+	for _, i := range rows {
+		var dot float64
+		for k := csr.RowPtr[i]; k < csr.RowPtr[i+1]; k++ {
+			dot += float64(csr.Vals[k]) * r[csr.ColIdx[k]]
+		}
+		normSq += dot * dot
+	}
+	score := math.Sqrt(normSq) / math.Sqrt(float64(len(rows)))
+	std := sigmaHat / math.Sqrt(2*float64(len(rows)))
+	if std == 0 {
+		return 0
+	}
+	return (score - sigmaHat) / std
 }

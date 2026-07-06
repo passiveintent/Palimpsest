@@ -20,7 +20,7 @@ func buildTestCSR() *CSR {
 		NCols:  4,
 		RowPtr: []int32{0, 2, 3, 6},
 		ColIdx: []int32{0, 2, 1, 0, 1, 3},
-		Vals:   []float64{1.0, -2.0, 0.5, 1.0, 1.0, 3.0},
+		Vals:   []float32{1.0, -2.0, 0.5, 1.0, 1.0, 3.0},
 	}
 }
 

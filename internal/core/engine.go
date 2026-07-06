@@ -63,6 +63,19 @@ type Config struct {
 	FISTAPowerIters int
 	FISTAThreshold  float64
 
+	// EscalateThreshold, when > 0, enables the ADR-014 Group-OMP escalation
+	// path on every Recover call this Engine makes (recommended production
+	// value: 0.3). 0 disables escalation entirely — the standard
+	// Recover() trigger contract this Config exposes; merged-tier views
+	// (ADR-015) rely on this same contract rather than a separate
+	// escalation default.
+	EscalateThreshold float64
+
+	// Grouper, if non-nil, overrides the default label-hierarchy grouper
+	// used during escalation (recover.DefaultGrouper()). nil is the normal
+	// case.
+	Grouper recover.Grouper
+
 	// DriftThreshold configures the Matcher's substrate (c).
 	DriftThreshold float64
 
@@ -77,17 +90,25 @@ type Config struct {
 	// under-limit emitters can still sum to an over-limit shard-wide birth
 	// rate. 0 disables it.
 	MaxBirthsPerViewPerMin int
+
+	// MergedViews declares, by ViewID, which views are merged tier
+	// (ADR-015) and their trust-guardrail policy. A ViewID absent from
+	// this map is not merged tier: its Results always carry
+	// recover.MergedTrustNA and the guardrail is never evaluated for it.
+	MergedViews map[uint16]MergedPolicy
 }
 
 // recoverOptions builds the recover.Options this Config implies for one
 // solve at the given revision.
 func (c Config) recoverOptions(revision int) recover.Options {
 	return recover.Options{
-		Iters:      c.FISTAIters,
-		Lambda:     c.FISTALambda,
-		PowerIters: c.FISTAPowerIters,
-		Threshold:  c.FISTAThreshold,
-		Revision:   revision,
+		Iters:             c.FISTAIters,
+		Lambda:            c.FISTALambda,
+		PowerIters:        c.FISTAPowerIters,
+		Threshold:         c.FISTAThreshold,
+		Revision:          revision,
+		EscalateThreshold: c.EscalateThreshold,
+		Grouper:           c.Grouper,
 	}
 }
 
@@ -459,6 +480,7 @@ func (e *Engine) solveWindow(ctx context.Context, shard *ShardState, view *ViewS
 	}
 	res.Coverage = len(win.Contributors)
 	res.CoverageTotal = e.cfg.EmittersExpected
+	e.evaluateMergedTrust(&res, view)
 
 	view.Watermark.MarkRecovered(win.Seq, now)
 	win.Revision++
@@ -501,6 +523,26 @@ func (e *Engine) solveWindow(ctx context.Context, shard *ShardState, view *ViewS
 		}
 		_ = e.seriesSink.WriteSeries(ctx, samples)
 	}
+}
+
+// evaluateMergedTrust stamps res.MergedTrust (ADR-015): views absent from
+// Config.MergedViews are not merged tier and always get MergedTrustNA. A
+// declared merged-tier view's guardrail is evaluated from this solve's own
+// live k (RawSupport)/A (Coverage, just set by the caller) and the view's
+// current dictionary size (N) — never Config.EmittersExpected, which is a
+// static ceiling, not what actually contributed this window. This runs
+// before the residual/DEGRADED gate below: the two gates are independent
+// and both apply regardless of order.
+func (e *Engine) evaluateMergedTrust(res *recover.Result, view *ViewState) {
+	policy, ok := e.cfg.MergedViews[view.ViewID]
+	if !ok {
+		res.MergedTrust = recover.MergedTrustNA
+		return
+	}
+	n := len(view.Dict.ActiveIDs())
+	_, trust := policy.evaluate(res.RawSupport, n, res.Coverage)
+	res.MergedTrust = trust
+	e.metrics.IncMergedWindows(trust)
 }
 
 func (e *Engine) setDegraded(view *ViewState, degraded bool) {

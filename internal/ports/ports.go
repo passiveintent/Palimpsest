@@ -41,6 +41,18 @@ type FrameSource interface {
 	Run(ctx context.Context, handle func(*wire.Frame)) error
 }
 
+// FrameSink publishes wire frames to a transport, the encode-side mirror of
+// FrameSource (e.g. internal/adapters/kafka.Sink producing to a Kafka
+// topic). Most encoders (otel/processor/csresidual's default file sink)
+// write directly to disk instead and never need this port; it exists for
+// transports where publishing can fail or block (a network producer) and
+// callers need an explicit error rather than a best-effort file write.
+type FrameSink interface {
+	Send(ctx context.Context, f *wire.Frame) error
+	// Close releases any resources (e.g. the underlying client connection).
+	Close() error
+}
+
 // AnomalyEvent is one flagged deviation, produced by any of ADR-009's five
 // recovery substrates and routed to an AnomalySink.
 type AnomalyEvent struct {
@@ -69,6 +81,12 @@ type AnomalyEvent struct {
 	Coverage      int `json:"coverage"`       // emitters present for this window (ADR-013)
 	CoverageTotal int `json:"coverage_total"` // emitters expected
 	Revision      int `json:"revision"`       // 0 for initial, incremented on watermark repair
+
+	// MergedTrust is "" | "na" | "unproven" | "proven" (ADR-015): the
+	// scaling-law guardrail verdict for a merged-tier view's cross-emitter
+	// fusion, independent of Confidence (which reports recovery mode
+	// regardless of this verdict). "na" for non-merged-tier events.
+	MergedTrust string `json:"merged_trust,omitempty"`
 
 	DetectedAt time.Time `json:"detected_at"`
 

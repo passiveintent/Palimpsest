@@ -101,7 +101,13 @@ func createDefaultConfig() component.Config {
 		},
 		Shadow: false,
 		Output: OutputConfig{
-			Dir: "/var/lib/palimpsest/frames",
+			Type: outputTypeFile,
+			Dir:  "/var/lib/palimpsest/frames",
+			Kafka: KafkaOutputConfig{
+				SpoolDir:      "/var/lib/palimpsest/kafka-spool",
+				SpoolMaxBytes: "1GB",
+				DrainInterval: 10 * time.Second,
+			},
 		},
 	}
 }
