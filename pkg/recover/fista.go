@@ -22,10 +22,11 @@ import (
 // (substrate b) reports ConfidencePointQuery, and a caller's own
 // keyframe-scan path (substrate c) reports ConfidenceKeyframe.
 const (
-	ConfidenceRecovered  = "recovered"
-	ConfidencePointQuery = "pointquery"
-	ConfidenceKeyframe   = "keyframe"
-	ConfidenceFallback   = "fallback"
+	ConfidenceRecovered      = "recovered"
+	ConfidenceRecoveredGroup = "recovered-group" // ADR-014: group-lasso escalation path
+	ConfidencePointQuery     = "pointquery"
+	ConfidenceKeyframe       = "keyframe"
+	ConfidenceFallback       = "fallback"
 )
 
 // fistaMaxIters mirrors the Python conformance oracle's FISTA_MAX_ITERS
@@ -63,18 +64,33 @@ type Options struct {
 	// bookkeeping (which frames have merged so far, when a late frame
 	// triggered a repair re-solve) rather than to a single Recover call.
 	Revision int
+
+	// EscalateThreshold, when > 0, enables the ADR-014 group-lasso escalation
+	// path: if plain FISTA's Residual exceeds this value OR the recovered
+	// support is denser than M/10 (operational ADR-004 cliff), Recover
+	// re-runs as group-lasso. 0 disables escalation entirely.
+	// Recommended production value: 0.3.
+	EscalateThreshold float64
+
+	// Grouper, if non-nil, overrides the default label-hierarchy grouper used
+	// during escalation. nil uses DefaultGrouper(). Ignored when
+	// EscalateThreshold is 0.
+	Grouper Grouper
 }
 
 // Result is a single Recover call's outcome.
 type Result struct {
 	SupportIDs    []uint64
+	GroupIDs      []uint64 // flagged groups (ADR-014); non-nil only on the group-lasso path
 	Values        []float64
 	Residual      float64
-	Confidence    string // "recovered" | "pointquery" | "keyframe" | "fallback"
+	Confidence    string // "recovered" | "recovered-group" | "pointquery" | "keyframe" | "fallback"
 	Coverage      int    // emitters present (ADR-013)
 	CoverageTotal int    // emitters expected (ADR-013)
 	Revision      int    // 0 for initial, incremented on repair (ADR-013)
 	Iters         int
+	Restarts      int // function-value restarts fired (ADR-014)
+	RawSupport    int // len(support) before M/10 cap; used for escalation-size check
 }
 
 // Recover runs FISTA basis-pursuit-denoising recovery
@@ -126,14 +142,23 @@ func Recover(y []float64, dict *Dictionary, p sketch.Params, o Options) (Result,
 		}, nil
 	}
 
-	x := fista(csr, y, o.Lambda, o.Iters, o.PowerIters)
+	// Lambda conformance (ADR-014): Options.Lambda is a multiplier applied to
+	// max|Phi^T y| so the penalty scales with the problem's signal magnitude.
+	// lamOverL ∈ [0.01, 0.05] at typical problem scales (SPEC §Recovery).
+	lambdaAbs := scaledLambda(csr, y, o.Lambda, n)
 
-	support := make([]int, 0)
-	for i, v := range x {
+	x, xRestarts := fista(csr, y, lambdaAbs, o.Iters, o.PowerIters)
+
+	// Full (uncapped) support — used for the escalation support-density check.
+	rawSupportLen := 0
+	for _, v := range x {
 		if math.Abs(v) > o.Threshold {
-			support = append(support, i)
+			rawSupportLen++
 		}
 	}
+
+	// Cap support to M/10, keeping the highest-|x_i| candidates.
+	support := cappedSupport(x, o.Threshold, p.M/10)
 
 	supportIDs := make([]uint64, len(support))
 	for i, row := range support {
@@ -149,35 +174,82 @@ func Recover(y []float64, dict *Dictionary, p sketch.Params, o Options) (Result,
 		diff := y[i] - recon[i]
 		sumSq += diff * diff
 	}
+	plainResidual := math.Sqrt(sumSq)
+
+	// ADR-014 escalation (Group-OMP kill path): escalate when plain FISTA
+	// either (a) has high residual (poor fit) OR (b) recovers a dense uncapped
+	// raw support (>M/10 — the ADR-004 cliff): dense regimes smear support.
+	// Uses Group-OMP (groupomp.go) — not group-FISTA — because the OMP path
+	// is 10–100× faster and immune to the block-threshold momentum latch.
+	// Winner selection: escalation result returned only if its debiased
+	// residual is strictly lower than the plain path's.
+	if o.EscalateThreshold > 0 && (plainResidual > o.EscalateThreshold || rawSupportLen > p.M/10) {
+		grouper := o.Grouper
+		if grouper == nil {
+			grouper = DefaultGrouper()
+		}
+		// Use M/5 as OMP context (double the plain M/10 cap) so scattered
+		// singletons displaced from the top M/10 by cross-talk-boosted
+		// AZ members are still included in the Group-OMP residual computation.
+		ompRows := cappedSupport(x, o.Threshold, p.M/5)
+		gr, gerr := RecoverGroupOMP(y, dict, p, grouper, x, ompRows, xRestarts, o)
+		if gerr == nil && gr.Residual < plainResidual {
+			return gr, nil
+		}
+	}
 
 	return Result{
 		SupportIDs:    supportIDs,
 		Values:        values,
-		Residual:      math.Sqrt(sumSq),
+		Residual:      plainResidual,
 		Confidence:    ConfidenceRecovered,
 		Coverage:      present,
 		CoverageTotal: total,
 		Revision:      o.Revision,
 		Iters:         o.Iters,
+		Restarts:      xRestarts,
+		RawSupport:    rawSupportLen,
 	}, nil
 }
 
-// fista runs the FISTA iteration for min_x 0.5||y-Phi x||^2 + lambda||x||_1
-// over csr (Phi^T). Guardrail: no allocation inside the iteration loop —
-// every buffer below is allocated once, before it, and reused in place.
-func fista(csr *CSR, y []float64, lambda float64, iters, powerIters int) []float64 {
+// restartRelTol is the relative tolerance for the best-seen function-value
+// restart (ADR-014 §3, Prompt 11c): restart fires iff
+// F(x_new) > F_best * (1 + restartRelTol). On fire, F_best is RESET to
+// F(x_new) (not to the pre-restart F_best), which prevents cascade restarts
+// — the next restart tests against the current regressed level, not the
+// old minimum.  The 1e-6 relative tolerance absorbs floating-point noise
+// while catching genuine objective regressions from momentum overshoot.
+const restartRelTol = 1e-6
+
+// fista runs the FISTA iteration for min_x 0.5||y-Phi x||^2 + lambdaAbs||x||_1
+// over csr (Phi^T) with best-seen prox-iterate restart (ADR-014 §3).
+// After each proximal step, F(x_new) is evaluated (one extra MulVec) and
+// compared against F_best.  If F(x_new) > F_best*(1+restartRelTol), the
+// momentum has overshot; reset t=1, z=x_new, F_best=F(x_new).
+// Otherwise update normally and F_best=min(F_best, F(x_new)).
+// Guardrail: no allocation inside the iteration loop.
+func fista(csr *CSR, y []float64, lambdaAbs float64, iters, powerIters int) ([]float64, int) {
 	n, m := csr.NRows, csr.NCols
 	L := estimateLipschitz(csr, powerIters)
-	lamOverL := lambda / L
+	lamOverL := lambdaAbs / L
 
 	x := make([]float64, n)
 	z := make([]float64, n)
 	xNew := make([]float64, n)
 	grad := make([]float64, n)
 	phiZ := make([]float64, m)
+	phiXNew := make([]float64, m) // Phi @ x_new (for F(x_new) restart check)
 	resid := make([]float64, m)
 
+	// F(0) = 0.5*||y||^2 (x=0 initial).
+	var fBest float64
+	for _, yi := range y {
+		fBest += yi * yi
+	}
+	fBest *= 0.5
+
 	t := 1.0
+	var restarts int
 	for iter := 0; iter < iters; iter++ {
 		csr.MulTransposeInto(z, phiZ) // phiZ = Phi @ z
 		for i := range resid {
@@ -189,16 +261,49 @@ func fista(csr *CSR, y []float64, lambda float64, iters, powerIters int) []float
 			xNew[i] = softThreshold(z[i]-grad[i]/L, lamOverL)
 		}
 
-		tNew := (1 + math.Sqrt(1+4*t*t)) / 2
-		coeff := (t - 1) / tNew
-		for i := 0; i < n; i++ {
-			zi := xNew[i] + coeff*(xNew[i]-x[i])
-			x[i] = xNew[i]
-			z[i] = zi
+		// Compute F(x_new) = 0.5*||y-Phi x_new||^2 + lambda*||x_new||_1
+		// (one extra MulVec per iteration for the restart check).
+		csr.MulTransposeInto(xNew, phiXNew)
+		var fNew float64
+		for i := range y {
+			d := y[i] - phiXNew[i]
+			fNew += d * d
 		}
-		t = tNew
+		fNew *= 0.5
+		for _, xi := range xNew {
+			if xi > 0 {
+				fNew += lambdaAbs * xi
+			} else if xi < 0 {
+				fNew -= lambdaAbs * xi
+			}
+		}
+
+		// Best-seen restart: fire iff F(x_new) > F_best*(1+restartRelTol).
+		// On fire: reset t=1, z=x_new, AND F_best=F(x_new) (prevents cascades).
+		// On normal: F_best = min(F_best, F(x_new)).
+		if fNew > fBest*(1+restartRelTol) {
+			t = 1.0
+			for i := 0; i < n; i++ {
+				x[i] = xNew[i]
+				z[i] = xNew[i]
+			}
+			fBest = fNew // reset — next restart fires vs THIS regressed level
+			restarts++
+		} else {
+			tNew := (1 + math.Sqrt(1+4*t*t)) / 2
+			coeff := (t - 1) / tNew
+			for i := 0; i < n; i++ {
+				zi := xNew[i] + coeff*(xNew[i]-x[i])
+				x[i] = xNew[i]
+				z[i] = zi
+			}
+			t = tNew
+			if fNew < fBest {
+				fBest = fNew
+			}
+		}
 	}
-	return x
+	return x, restarts
 }
 
 // softThreshold is the proximal operator of the L1 norm.
@@ -284,4 +389,59 @@ func l2norm(v []float64) float64 {
 		sumSq += x * x
 	}
 	return math.Sqrt(sumSq)
+}
+
+// partialSort rearranges entries so the k largest (by abs field) occupy
+// entries[0..k-1] in arbitrary order (Floyd-Rivest quickselect, O(n) average).
+// Used to cap the support to M/10 without a full O(n log n) sort.
+type supportEntry struct {
+	row int
+	abs float64
+}
+
+func partialSort(entries []supportEntry, k int) {
+	if k >= len(entries) {
+		return
+	}
+	lo, hi := 0, len(entries)-1
+	for lo < hi {
+		pivot := entries[(lo+hi)/2].abs
+		i, j := lo, hi
+		for i <= j {
+			for entries[i].abs > pivot {
+				i++
+			}
+			for entries[j].abs < pivot {
+				j--
+			}
+			if i <= j {
+				entries[i], entries[j] = entries[j], entries[i]
+				i++
+				j--
+			}
+		}
+		if j < k {
+			lo = i
+		}
+		if i > k {
+			hi = j
+		}
+		if j < k && i > k {
+			break
+		}
+	}
+}
+
+// sortInts sorts a small slice of ints ascending (used for capped support).
+func sortInts(a []int) {
+	// insertion sort: the capped support is at most M/10 ≈ 200 elements.
+	for i := 1; i < len(a); i++ {
+		key := a[i]
+		j := i - 1
+		for j >= 0 && a[j] > key {
+			a[j+1] = a[j]
+			j--
+		}
+		a[j+1] = key
+	}
 }

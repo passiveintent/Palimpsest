@@ -510,26 +510,61 @@ def fista(
     iters: int = FISTA_MAX_ITERS,
     power_iters: int = 50,
     seed: int = 0,
-) -> np.ndarray:
-    """FISTA for min_x 0.5||y - Phi x||^2 + lam||x||_1."""
+    x0: np.ndarray | None = None,
+) -> tuple[np.ndarray, int]:
+    """FISTA for min_x 0.5||y - Phi x||^2 + lam_abs||x||_1.
+
+    lam is a multiplier: lam_abs = lam * max|Phi^T y| (ADR-014 lambda
+    conformance — scales penalty to problem magnitude so lamOverL ∈ [0.01,
+    0.05] at typical scales).
+
+    Function-value restart (ADR-014): after the proximal step, if
+    F(x_new) > F(x_prev) the objective increased; reset t=1, z=x_new.
+    This prevents the block-threshold latch without the spurious triggers
+    of the gradient-mapping criterion on easy cases.
+
+    Returns (x, restarts).
+    """
     if iters > FISTA_MAX_ITERS:
         raise ValueError(f"iters {iters} exceeds FISTA_MAX_ITERS {FISTA_MAX_ITERS}")
     phi_t = phi.T.tocsr()
     rng = np.random.default_rng(seed)
     L = _estimate_lipschitz(phi, power_iters, rng)
 
+    # Lambda conformance: scale by max|Phi^T y|.
+    phi_t_y = phi_t @ y
+    max_phi_t_y = float(np.max(np.abs(phi_t_y)))
+    if max_phi_t_y == 0:
+        max_phi_t_y = 1.0
+    lam_abs = lam * max_phi_t_y
+    lam_over_l = lam_abs / L
+
     n = phi.shape[1]
-    x = np.zeros(n)
-    z = np.zeros(n)
+    x = np.zeros(n) if x0 is None else x0.copy()
+    z = x.copy()
     t = 1.0
+    restarts = 0
+
+    # Initial objective at x (or warm start).
+    f_prev = 0.5 * float(np.linalg.norm(y - phi @ x) ** 2) + lam_abs * float(np.sum(np.abs(x)))
+
     for _ in range(iters):
         grad = phi_t @ (phi @ z - y)
-        x_new = _soft_threshold(z - grad / L, lam / L)
-        t_new = (1 + math.sqrt(1 + 4 * t * t)) / 2
-        z = x_new + ((t - 1) / t_new) * (x_new - x)
+        x_new = _soft_threshold(z - grad / L, lam_over_l)
+
+        # Function-value restart: F(x_new) = 0.5||y-Phi x_new||^2 + lam_abs||x_new||_1.
+        f_new = 0.5 * float(np.linalg.norm(y - phi @ x_new) ** 2) + lam_abs * float(np.sum(np.abs(x_new)))
+        if f_new > f_prev:
+            t = 1.0
+            z = x_new.copy()
+            restarts += 1
+        else:
+            t_new = (1 + math.sqrt(1 + 4 * t * t)) / 2
+            z = x_new + ((t - 1) / t_new) * (x_new - x)
+            t = t_new
         x = x_new
-        t = t_new
-    return x
+        f_prev = f_new
+    return x, restarts
 
 
 def debias(phi: sparse.csc_matrix, y: np.ndarray, support: list[int], ridge: float = 1e-6) -> np.ndarray:
@@ -550,9 +585,24 @@ def recover(
     iters: int = FISTA_MAX_ITERS,
     power_iters: int = 50,
     seed: int = 0,
-) -> tuple[list[int], np.ndarray, np.ndarray]:
-    """Runs FISTA then debias; returns (support_indices, x_fista, x_debiased)."""
-    x = fista(phi, y, lam, iters=iters, power_iters=power_iters, seed=seed)
-    support = sorted(int(i) for i in np.nonzero(np.abs(x) > threshold)[0])
+    x0: np.ndarray | None = None,
+) -> tuple[list[int], np.ndarray, np.ndarray, int]:
+    """Runs FISTA then debias; returns (support_indices, x_fista, x_debiased, restarts).
+
+    Cap applied to M/10 largest-amplitude entries before debiasing (matching
+    Go's capped-support logic in Recover, ADR-014 §4).
+    """
+    x, restarts = fista(phi, y, lam, iters=iters, power_iters=power_iters, seed=seed, x0=x0)
+    support_full = sorted(int(i) for i in np.nonzero(np.abs(x) > threshold)[0])
+
+    # Cap to M/10 by amplitude (mirrors Go Recover's partialSort cap).
+    m = phi.shape[0]
+    cap = m // 10
+    if len(support_full) > cap:
+        ranked = sorted(support_full, key=lambda i: abs(x[i]), reverse=True)
+        support = sorted(ranked[:cap])
+    else:
+        support = support_full
+
     x_deb = debias(phi, y, support)
-    return support, x, x_deb
+    return support, x, x_deb, restarts

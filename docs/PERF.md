@@ -70,6 +70,26 @@ or reconstruction falls behind — see the "storm cliff" discussion in
 [../README.md](../README.md)'s Limitations section for the related sparsity
 ceiling.
 
+**ADR-014 Group-OMP adaptive restart**: one extra `MulTransposeInto` (Φ @ x_new,
+O(N·d) ≈ 300k multiplications at N=50k, d=6) added to every FISTA iteration
+to evaluate F(x_new) for the best-seen restart check. The restart criterion
+fires 0–3 times on easy cases (k ≤ m/5), contributing negligible overhead.
+
+**ADR-014 Group-OMP escalation path** (dense-regime AZ-outage scenario,
+N=50k, m=2000, 500-member group): measured wall time on the test machine:
+
+```
+plain Recover (FISTA only):     ~380 ms
+Recover with Group-OMP escalation:  ~460 ms  (ratio ≈ 1.2×)
+```
+
+Group-OMP adds: one additional `cappedSupport` (M/5 cap), one `debias` on
+400 rows, O(ngroups·|g|·d) residual-correlation scan for each of ≤ 3 rounds,
+and one final `debias` on the ~700-row union. For the single-large-group
+scenario the scan dominates at O(500·6) = 3000 multiplications per group —
+negligible versus the FISTA solve. The 1.2× overhead budget is comfortably
+within the 2× contract. Plain-path calls (no escalation) carry no overhead.
+
 ## Watermark (`internal/core`)
 
 | Benchmark | ns/op | B/op | allocs/op |

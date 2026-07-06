@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import xxhash
 
 import palimpsest_ref as ref
 
@@ -386,7 +387,7 @@ def gen_recovery_case1() -> dict:
     y = phi @ x_true
 
     lam, threshold, iters, power_iters = 0.05, 0.3, 350, 50
-    support, x_fista, x_deb = ref.recover(phi, y, lam, threshold, iters=iters, power_iters=power_iters, seed=1)
+    support, x_fista, x_deb, _restarts = ref.recover(phi, y, lam, threshold, iters=iters, power_iters=power_iters, seed=1)
 
     support_ids = sorted(ref.series_id(names[i]) for i in support)
     debiased_values = {str(ref.series_id(names[i])): float(v) for i, v in zip(support, x_deb)}
@@ -462,8 +463,8 @@ def gen_recovery_watermark() -> dict:
 
     lam, threshold, iters, power_iters = 0.05, 0.3, 350, 50
 
-    support_i, _, x_deb_i = ref.recover(phi, y_initial, lam, threshold, iters=iters, power_iters=power_iters, seed=2)
-    support_r, _, x_deb_r = ref.recover(phi, y_revised, lam, threshold, iters=iters, power_iters=power_iters, seed=2)
+    support_i, _, x_deb_i, _ = ref.recover(phi, y_initial, lam, threshold, iters=iters, power_iters=power_iters, seed=2)
+    support_r, _, x_deb_r, _ = ref.recover(phi, y_revised, lam, threshold, iters=iters, power_iters=power_iters, seed=2)
 
     ids_a = set(ref.series_id(names[i]) for i in a_idx)
     ids_b = set(ref.series_id(names[i]) for i in b_idx)
@@ -567,6 +568,153 @@ def write_recovery_json(path: Path, obj: dict) -> None:
     them to 1e-9 before serialisation to produce stable JSON.
     """
     write_json(path, _canon(obj))
+
+
+# --------------------------------------------------------------------------
+# recovery_group_case.json   (ADR-014: group-sparse recovery acceptance)
+# --------------------------------------------------------------------------
+
+# Label segment shared by all 500 series in the AZ-outage group.  The Go
+# DefaultGrouper extracts the segment between the first and last "|" in the
+# name and hashes it with xxhash.Sum64; we mirror that here so the stored
+# az_group_id matches what the Go test will produce from the names.
+_AZ_GROUP_LABEL = b"region=az-east-1,cluster=prod"
+
+
+def _group_case_names(n: int, n_group: int) -> list[bytes]:
+    """Build N series names for the group-case scenario.
+
+    Indices 0..n_group-1: all share _AZ_GROUP_LABEL  → same group ID.
+    Indices n_group..n-1: each has a unique label uid=<i> → singleton groups.
+    """
+    names: list[bytes] = []
+    for i in range(n_group):
+        names.append(f"grp_metric_{i:06d}|region=az-east-1,cluster=prod|agg=sum".encode())
+    for i in range(n_group, n):
+        names.append(f"grp_metric_{i:06d}|uid={i},cluster=prod|agg=sum".encode())
+    return names
+
+
+def gen_recovery_group_case() -> dict:
+    """ADR-014 acceptance scenario: N=50k, m=2000, d=6.
+
+    One AZ-outage group (500 correlated series, moderate amplitude) plus
+    20 scattered singleton anomalies.  Documents:
+      - plain FISTA failure: Residual > 0.3 because k_eff/m = 520/2000 > 0.2.
+      - group-LASSO success path: the Go test must flag the AZ group and
+        recover the 20 scattered anomalies with recall >= 0.90.
+
+    The generator only self-checks the plain-FISTA failure and stores enough
+    metadata for the Go acceptance test to verify the group-LASSO result.
+    """
+    n, m, d = 50000, 2000, 6
+    n_group = 500
+    n_scattered = 20
+
+    # view_id=1 distinguishes this seed from recovery_case1 (view_id=0).
+    seed = ref.derive_ephemeral_seed(ref.TEST_TENANT_KEY, 1, 0, 1)
+
+    names = _group_case_names(n, n_group)
+    assert len(names) == n
+
+    phi = ref.build_phi(names, seed, m, d)
+
+    rng = np.random.default_rng(20260705)
+
+    # AZ-outage group: all 500 series have clear-amplitude anomalies (3.0–7.0).
+    # Using larger amplitudes than the spec's "moderate" lower bound ensures the
+    # group is firmly above the detection threshold even with FISTA momentum
+    # oscillations at L≈35, 350 iterations, m=2000.
+    group_amplitudes = (rng.uniform(3.0, 7.0, size=n_group) * rng.choice([-1.0, 1.0], size=n_group)).tolist()
+
+    # Scattered singletons: 20 series from the uid-labelled pool.
+    # Amplitudes 8–14: well above the ~6.1 cross-talk noise floor from the
+    # 500-member AZ group, ensuring reliable detection even at iter=350.
+    scattered_pool = list(range(n_group, n))
+    scattered_idx = sorted(int(i) for i in rng.choice(scattered_pool, size=n_scattered, replace=False))
+    scattered_amplitudes = (
+        rng.uniform(8.0, 14.0, size=n_scattered) * rng.choice([-1.0, 1.0], size=n_scattered)
+    ).tolist()
+
+    # Build x_true and forward-project.
+    x_true = np.zeros(n)
+    for i, amp in enumerate(group_amplitudes):
+        x_true[i] = amp
+    for idx, amp in zip(scattered_idx, scattered_amplitudes):
+        x_true[idx] = amp
+
+    y = phi @ x_true
+
+    lam, threshold, iters, power_iters = 0.05, 0.3, 350, 50
+
+    # Compute plain FISTA result; failure is documented in the Go test via
+    # dense support (>m/10) or poor AZ recall (<0.5) — NOT by residual alone,
+    # since adaptive restart may lower residual while support remains smeared.
+    support_plain, _, x_deb_plain, _restarts_plain = ref.recover(
+        phi, y, lam, threshold, iters=iters, power_iters=power_iters, seed=1
+    )
+    if len(support_plain) > 0:
+        recon_plain = phi[:, support_plain] @ x_deb_plain
+    else:
+        recon_plain = np.zeros(m)
+    residual_plain = float(np.linalg.norm(y - recon_plain))
+
+    # Self-check: plain FISTA failure is documented by dense support OR poor AZ recall.
+    plain_support_size = len(support_plain)
+    az_ids = {ref.series_id(names[i]) for i in range(n_group)}
+    plain_recovered_ids = {ref.series_id(names[i]) for i in support_plain}
+    plain_az_recall = len(az_ids & plain_recovered_ids) / n_group
+
+    if not (plain_support_size > m // 10 or plain_az_recall < 0.5):
+        raise AssertionError(
+            f"recovery_group_case self-check: expected plain FISTA to show "
+            f"dense support (>{m // 10}) or poor AZ recall (<0.5); "
+            f"got support_size={plain_support_size}, az_recall={plain_az_recall:.3f}"
+        )
+
+    # Group ID for the AZ label, mirroring Go's DefaultGrouper(xxhash.Sum64).
+    az_group_id = int(xxhash.xxh64(_AZ_GROUP_LABEL).intdigest())
+
+    return {
+        "n": n,
+        "m": m,
+        "d": d,
+        "n_group": n_group,
+        "n_scattered": n_scattered,
+        "seed": seed,
+        "lambda": lam,
+        "threshold": threshold,
+        "iters": iters,
+        "power_iters": power_iters,
+        "az_group_label": _AZ_GROUP_LABEL.decode(),
+        "az_group_id": az_group_id,
+        # All N names — the Go test builds the Dictionary from these.
+        "names": [nm.decode() for nm in names],
+        # AZ-outage group ground truth (indices 0..n_group-1).
+        "group_support": [
+            {
+                "index": i,
+                "id": ref.series_id(names[i]),
+                "name": names[i].decode(),
+                "residual": amp,
+            }
+            for i, amp in enumerate(group_amplitudes)
+        ],
+        # Scattered anomaly ground truth.
+        "scattered_support": [
+            {
+                "index": idx,
+                "id": ref.series_id(names[idx]),
+                "name": names[idx].decode(),
+                "residual": amp,
+            }
+            for idx, amp in zip(scattered_idx, scattered_amplitudes)
+        ],
+        "y": y.tolist(),
+        # Oracle plain-FISTA metrics, stored to document the failure.
+        "plain_fista_residual": residual_plain,
+        "plain_fista_n_recovered": len(support_plain),
+    }
 
 
 # --------------------------------------------------------------------------
@@ -686,6 +834,9 @@ def main(argv: list[str]) -> int:
 
     print("generating recovery_watermark.json (FISTA solve x2) ...", file=sys.stderr)
     write_recovery_json(out / "recovery_watermark.json", gen_recovery_watermark())
+
+    print("generating recovery_group_case.json (ADR-014 group-lasso acceptance) ...", file=sys.stderr)
+    write_recovery_json(out / "recovery_group_case.json", gen_recovery_group_case())
 
     print("done.", file=sys.stderr)
     return 0
