@@ -1,10 +1,20 @@
-.PHONY: tidy test race bench lint golden kafka-integration
+.PHONY: tidy test race bench lint golden kafka-integration deps-check
 
 tidy:
 	go mod tidy
 
 test:
 	go test ./...
+
+deps-check:
+	# ADR-007: pkg/* stays stdlib + xxhash only. zstd (klauspost/compress),
+	# franz-go, etc. must never appear in pkg/*'s dependency graph — they
+	# belong in cmd/, internal/, otel/, or a leaf package like zstdcodec/.
+	@bad=$$(go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./pkg/... | grep -v '^$$' | grep -v '^github.com/cespare/xxhash/v2$$' | grep -v '^github.com/passiveintent/Palimpsest/pkg/'); \
+	if [ -n "$$bad" ]; then \
+		echo "pkg/* imports something beyond stdlib+xxhash (ADR-007):"; echo "$$bad"; exit 1; \
+	fi
+	@echo "deps-check OK: pkg/* is stdlib + xxhash only"
 
 race:
 	@if [ "$(GOOS)" = "windows" ] || [ "$$(go env GOOS)" = "windows" ]; then \

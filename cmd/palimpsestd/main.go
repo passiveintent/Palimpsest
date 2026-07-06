@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/passiveintent/Palimpsest/pkg/wire"
+	"github.com/passiveintent/Palimpsest/zstdcodec"
 
 	"github.com/passiveintent/Palimpsest/internal/adapters/fswatch"
 	"github.com/passiveintent/Palimpsest/internal/adapters/httpsrc"
@@ -133,6 +134,14 @@ func parseFlags() flags {
 }
 
 func run() error {
+	// ADR-006 §Addendum, ADR-007: pkg/wire has no zstd dependency of its
+	// own, so palimpsestd registers a Compressor for CodecZstd at startup
+	// (mirroring otel/processor/csresidual's identical registration) so it
+	// can decode a CodecZstd frame regardless of which encoder produced it.
+	if err := zstdcodec.Register(); err != nil {
+		return fmt.Errorf("registering zstd codec: %w", err)
+	}
+
 	f := parseFlags()
 
 	tenantKey := os.Getenv(f.tenantKeyEnv)

@@ -222,7 +222,7 @@ func testGoldenFrame(t *testing.T) {
 	snapshotBlob, err := wire.EncodeSnapshot([]wire.SnapshotEntry{
 		{ID: birth1ID, TSMs: 1750000000000, Value: 13.1},
 		{ID: birth1ID, TSMs: 1750000005000, Value: 12.9},
-	}, false)
+	}, wire.CodecNone)
 	if err != nil {
 		t.Fatalf("EncodeSnapshot: %v", err)
 	}

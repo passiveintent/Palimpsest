@@ -75,13 +75,13 @@ func NewSnapshotStore(ttl time.Duration, maxCount int) *SnapshotStore {
 	}
 }
 
-// SelectAndPersist decodes blob (a wire snapshot blob, gzip-compressed per
-// ADR-012's default), keeps only entries whose ID is in flaggedIDs, and
-// upserts one Snapshot per surviving ID (most recent entries win),
-// captured at wall-clock now. Returns the Snapshots newly persisted by this
-// call.
-func (s *SnapshotStore) SelectAndPersist(flaggedIDs []uint64, blob []byte, now time.Time) ([]Snapshot, error) {
-	entries, err := decodeSnapshotBlob(blob)
+// SelectAndPersist decodes blob (a wire snapshot blob, compressed with
+// codec per the frame it arrived on — Frame.Codec, ADR-006 §Addendum),
+// keeps only entries whose ID is in flaggedIDs, and upserts one Snapshot
+// per surviving ID (most recent entries win), captured at wall-clock now.
+// Returns the Snapshots newly persisted by this call.
+func (s *SnapshotStore) SelectAndPersist(flaggedIDs []uint64, blob []byte, codec wire.Codec, now time.Time) ([]Snapshot, error) {
+	entries, err := wire.DecodeSnapshot(blob, codec)
 	if err != nil {
 		return nil, err
 	}
@@ -179,11 +179,4 @@ func (s *SnapshotStore) evictLocked(now time.Time) {
 	if len(s.touched) > 4*max(s.maxCount, 1) {
 		s.touched = append([]uint64(nil), s.touched[len(s.touched)-max(s.maxCount, 1):]...)
 	}
-}
-
-func decodeSnapshotBlob(blob []byte) ([]wire.SnapshotEntry, error) {
-	if entries, err := wire.DecodeSnapshot(blob, true); err == nil {
-		return entries, nil
-	}
-	return wire.DecodeSnapshot(blob, false)
 }

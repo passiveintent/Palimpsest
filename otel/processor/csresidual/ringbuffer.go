@@ -109,7 +109,7 @@ func (b *instanceBuffers) snapshotGroupLocked(groupKey string) []wire.SnapshotEn
 	}
 	var out []wire.SnapshotEntry
 	for _, entry := range instances {
-		decoded, err := wire.DecodeSnapshot(entry.rb.Snapshot(), false)
+		decoded, err := wire.DecodeSnapshot(entry.rb.Snapshot(), wire.CodecNone)
 		if err != nil {
 			// entry.rb.Snapshot() only ever produces bytes this same
 			// wire package understands; a decode failure here would mean
@@ -135,7 +135,7 @@ func (b *instanceBuffers) drain(ttl time.Duration) {
 	for groupKey, instances := range b.groups {
 		for instanceKey, entry := range instances {
 			entry.rb.Drain(ttl)
-			decoded, err := wire.DecodeSnapshot(entry.rb.Snapshot(), false)
+			decoded, err := wire.DecodeSnapshot(entry.rb.Snapshot(), wire.CodecNone)
 			if err != nil || len(decoded) == 0 {
 				delete(instances, instanceKey)
 				continue

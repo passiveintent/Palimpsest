@@ -112,30 +112,6 @@ func RecoverGroup(y []float64, dict *Dictionary, p sketch.Params, grouper Groupe
 	return recoverGroupOMP(pool, csr, y, dict, p, grouper, x, plainRows, xRestarts, xIters, o)
 }
 
-// RecoverGroupOMP is the public Group-OMP entry point: given a pre-computed
-// plain-LASSO solution (plainX/plainRows/plainRestarts/plainIters, avoiding
-// a re-run of FISTA), it builds its own CSR/matvec pool and runs the
-// Group-OMP core. Recover's escalation path and RecoverGroup both already
-// have a pool built for their own FISTA solve, so they call the unexported
-// recoverGroupOMP directly to reuse it instead of paying for a second CSR
-// build.
-func RecoverGroupOMP(
-	y []float64,
-	dict *Dictionary,
-	p sketch.Params,
-	grouper Grouper,
-	plainX []float64,
-	plainRows []int,
-	plainRestarts int,
-	plainIters int,
-	o Options,
-) (Result, error) {
-	csr := dict.BuildCSR(p.Seed, p.M, p.D)
-	pool := newMatvecPool(csr)
-	defer pool.Close()
-	return recoverGroupOMP(pool, csr, y, dict, p, grouper, plainX, plainRows, plainRestarts, plainIters, o)
-}
-
 // recoverGroupOMP is the Group-OMP core (ADR-014 kill criterion, Prompt 11c):
 // build the debiased residual from the plain-LASSO support, activate groups
 // by the H0-calibrated score test, LS-refit. Compared to the abandoned

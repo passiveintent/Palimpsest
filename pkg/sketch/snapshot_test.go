@@ -19,7 +19,7 @@ func TestRingBufferSnapshotRoundTrip(t *testing.T) {
 	rb.Push(1000, 1.5)
 	rb.Push(2000, 2.5)
 
-	entries, err := wire.DecodeSnapshot(rb.Snapshot(), false)
+	entries, err := wire.DecodeSnapshot(rb.Snapshot(), wire.CodecNone)
 	if err != nil {
 		t.Fatalf("DecodeSnapshot: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestRingBufferSnapshotIsolation(t *testing.T) {
 		t.Fatalf("Snapshot is not idempotent:\n first=% x\nsecond=% x", first, second)
 	}
 
-	entries, err := wire.DecodeSnapshot(rb.Snapshot(), false)
+	entries, err := wire.DecodeSnapshot(rb.Snapshot(), wire.CodecNone)
 	if err != nil {
 		t.Fatalf("DecodeSnapshot: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestRingBufferPushBoundsMemory(t *testing.T) {
 	rb.Push(50, 2)
 	rb.Push(250, 3) // cutoff = 250-100 = 150: both earlier samples drop
 
-	entries, err := wire.DecodeSnapshot(rb.Snapshot(), false)
+	entries, err := wire.DecodeSnapshot(rb.Snapshot(), wire.CodecNone)
 	if err != nil {
 		t.Fatalf("DecodeSnapshot: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestRingBufferDefaultWindow(t *testing.T) {
 	rb := NewRingBuffer(1, 0) // non-positive falls back to the 15-minute default
 	rb.Push(0, 1)
 	rb.Push(uint64((14 * time.Minute).Milliseconds()), 2)
-	entries, err := wire.DecodeSnapshot(rb.Snapshot(), false)
+	entries, err := wire.DecodeSnapshot(rb.Snapshot(), wire.CodecNone)
 	if err != nil {
 		t.Fatalf("DecodeSnapshot: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestRingBufferDrain(t *testing.T) {
 
 	rb.Drain(time.Second)
 
-	entries, err := wire.DecodeSnapshot(rb.Snapshot(), false)
+	entries, err := wire.DecodeSnapshot(rb.Snapshot(), wire.CodecNone)
 	if err != nil {
 		t.Fatalf("DecodeSnapshot: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestRingBufferDrainKeepsFreshSamples(t *testing.T) {
 
 	rb.Drain(time.Minute)
 
-	entries, err := wire.DecodeSnapshot(rb.Snapshot(), false)
+	entries, err := wire.DecodeSnapshot(rb.Snapshot(), wire.CodecNone)
 	if err != nil {
 		t.Fatalf("DecodeSnapshot: %v", err)
 	}

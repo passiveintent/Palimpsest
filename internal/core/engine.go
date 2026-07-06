@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -254,10 +255,18 @@ type WindowState struct {
 	Y            []float64
 	Contributors map[uint64]bool
 
-	SnapshotBlobs [][]byte
+	SnapshotBlobs []windowSnapshotBlob
 
 	Revision  int
 	Recovered bool
+}
+
+// windowSnapshotBlob pairs a RESIDUAL frame's SnapshotBlob with the Codec it
+// arrived compressed under, so solveWindow can decode it correctly
+// regardless of which codec its emitter was configured to use.
+type windowSnapshotBlob struct {
+	blob  []byte
+	codec wire.Codec
 }
 
 func (w *WindowState) merge(emitterID uint64, y []float64) {
@@ -351,19 +360,28 @@ func (e *Engine) handleKeyframe(ctx context.Context, shard *ShardState, evs *emi
 	kdelta := f.Flags&wire.FlagKDelta != 0
 	ids := evs.dict.ActiveIDs()
 
-	var (
-		values32 map[uint64]float32
-		err      error
-	)
+	// ADR-006 §Addendum: a KEYFRAME's Payload is compressed under f.Codec
+	// the same as SnapshotBlob. An unregistered codec is a distinct,
+	// counted failure mode from a merely-malformed payload (ErrInvalidFrame).
+	payload, err := wire.DecompressPayload(f.Codec, f.Payload, wire.MaxDecompressedBytes)
+	if err != nil {
+		if errors.Is(err, wire.ErrUnregisteredCodec) {
+			e.metrics.IncUnregisteredCodec()
+		}
+		e.setDegraded(view, true)
+		return
+	}
+
+	var values32 map[uint64]float32
 	if !kdelta {
-		values32, err = wire.DecodeKeyframe(f.Payload, false, nil, nil, 0)
+		values32, err = wire.DecodeKeyframe(payload, false, nil, nil, 0)
 	} else if !evs.seenGolden {
 		// ADR-013: "no orphaned deltas" — a KDELTA before this emitter's
 		// first golden keyframe can't be decoded correctly.
 		e.setDegraded(view, true)
 		return
 	} else {
-		values32, err = wire.DecodeKeyframe(f.Payload, true, ids, evs.prevKeyframeValues, f.QuantScale)
+		values32, err = wire.DecodeKeyframe(payload, true, ids, evs.prevKeyframeValues, f.QuantScale)
 	}
 	if err != nil {
 		e.setDegraded(view, true)
@@ -439,7 +457,7 @@ func (e *Engine) handleResidual(ctx context.Context, shard *ShardState, view *Vi
 	} else {
 		win.merge(f.EmitterID, y)
 		if len(f.SnapshotBlob) > 0 {
-			win.SnapshotBlobs = append(win.SnapshotBlobs, f.SnapshotBlob)
+			win.SnapshotBlobs = append(win.SnapshotBlobs, windowSnapshotBlob{blob: f.SnapshotBlob, codec: f.Codec})
 		}
 		if ready || repair {
 			e.solveWindow(ctx, shard, view, win, now)
@@ -496,9 +514,12 @@ func (e *Engine) solveWindow(ctx context.Context, shard *ShardState, view *ViewS
 	e.emitEvents(ctx, events, shard, 0, view.Epoch, view.ViewID, win.Seq, now)
 
 	if e.forensics != nil && len(res.SupportIDs) > 0 && len(win.SnapshotBlobs) > 0 {
-		for _, blob := range win.SnapshotBlobs {
-			snaps, err := e.forensics.SelectAndPersist(res.SupportIDs, blob, now)
+		for _, sb := range win.SnapshotBlobs {
+			snaps, err := e.forensics.SelectAndPersist(res.SupportIDs, sb.blob, sb.codec, now)
 			if err != nil {
+				if errors.Is(err, wire.ErrUnregisteredCodec) {
+					e.metrics.IncUnregisteredCodec()
+				}
 				continue
 			}
 			e.metrics.IncSnapshotsCaptured(len(snaps))

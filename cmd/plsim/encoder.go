@@ -38,6 +38,11 @@ type pipelineConfig struct {
 
 	SnapshotThreshold float64 // <=0 disables speculative snapshot push
 	RingWindow        time.Duration
+
+	// Codec compresses the KEYFRAME payload and the snapshot blob
+	// (ADR-006 §Addendum); the zero value, wire.CodecNone, is a no-op and
+	// matches this tool's pre-existing (uncompressed) behavior.
+	Codec wire.Codec
 }
 
 // pipeline is one (emitter, view)'s complete encode-side state: Tracker +
@@ -125,6 +130,7 @@ func (p *pipeline) flush(now time.Time, seq uint32, values map[string]float64) *
 		Predictor: uint8(p.pred.ID()),
 		Bits:      uint8(p.cfg.Bits),
 		Energy:    float32(energy),
+		Codec:     p.cfg.Codec,
 	}
 
 	keyframeWindow := p.cfg.KeyframeEvery > 0 && seq%uint32(p.cfg.KeyframeEvery) == 0
@@ -145,7 +151,19 @@ func (p *pipeline) flush(now time.Time, seq uint32, values map[string]float64) *
 
 	if p.cfg.SnapshotThreshold > 0 && haveCandidate && maxAbsResidual > p.cfg.SnapshotThreshold {
 		if rb, ok := p.ringBuffers[maxAbsID]; ok {
-			f.SnapshotBlob = rb.Snapshot()
+			// RingBuffer.Snapshot() always serializes uncompressed
+			// (sketch.RingBuffer has no Codec concept of its own); decode
+			// then re-encode under this pipeline's configured Codec so the
+			// frame's SnapshotBlob honors it end-to-end (ADR-006 §Addendum).
+			entries, err := wire.DecodeSnapshot(rb.Snapshot(), wire.CodecNone)
+			if err != nil {
+				panic(err)
+			}
+			blob, err := wire.EncodeSnapshot(entries, p.cfg.Codec)
+			if err != nil {
+				panic(err)
+			}
+			f.SnapshotBlob = blob
 		}
 	}
 
@@ -166,6 +184,10 @@ func (p *pipeline) buildKeyframe(f *wire.Frame, dictDeltas []wire.DictDelta) {
 
 	scale := adaptiveKDeltaScale(values32, p.prevKeyframeValues)
 	payload, flags, err := wire.EncodeKeyframe(ids, values32, p.prevKeyframeValues, golden, scale)
+	if err != nil {
+		panic(err)
+	}
+	payload, err = wire.CompressPayload(p.cfg.Codec, payload)
 	if err != nil {
 		panic(err)
 	}

@@ -71,6 +71,15 @@ type ChurnConfig struct {
 	MaxBirthsPerLogicalPerMin int `mapstructure:"max_births_per_logical_per_min"`
 }
 
+// CompressionConfig selects the Codec (docs/SPEC.md, ADR-006 §Addendum)
+// applied to a frame's compressible bytes: the snapshot blob always, and a
+// KEYFRAME's payload too. Codec must be one of "none", "gzip", or "zstd";
+// "zstd" requires the zstdcodec package's Register to have run (factory.go's
+// init), which this processor's build always does.
+type CompressionConfig struct {
+	Codec string `mapstructure:"codec"`
+}
+
 // PullConfig configures the optional ADR-012 pull endpoint (default off,
 // zero listening sockets). TLSCertFile/TLSKeyFile/TLSClientCAFile are not
 // in the illustrative config block this processor was speced from, but are
@@ -147,13 +156,22 @@ type Config struct {
 	KeyframeFullDictEvery int           `mapstructure:"keyframe_full_dict_every"`
 	GoldenKeyframeEvery   int           `mapstructure:"golden_keyframe_every"`
 	EpochRotate           time.Duration `mapstructure:"epoch_rotate"`
-	SeriesTTL             time.Duration `mapstructure:"series_ttl"`
+	// EpochJitterWindow desynchronizes this fleet's epoch rotations
+	// (ADR-013 §Addendum "herd jitter"): this emitter's actual rotation
+	// instant is delayed by a deterministic, emitter_id-derived offset in
+	// [0, EpochJitterWindow) past each epoch_rotate boundary, so a fleet
+	// sharing the same EpochRotate doesn't all emit a golden keyframe (and
+	// rebuild their Accumulator/Tracker) in the same instant. <=0 disables
+	// jitter (every emitter rotates at the unshifted boundary).
+	EpochJitterWindow time.Duration `mapstructure:"epoch_jitter_window"`
+	SeriesTTL         time.Duration `mapstructure:"series_ttl"`
 
-	Storm      StormConfig      `mapstructure:"storm"`
-	Snapshot   SnapshotConfig   `mapstructure:"snapshot"`
-	RingBuffer RingBufferConfig `mapstructure:"ringbuffer"`
-	Churn      ChurnConfig      `mapstructure:"churn"`
-	Pull       PullConfig       `mapstructure:"pull"`
+	Storm       StormConfig       `mapstructure:"storm"`
+	Snapshot    SnapshotConfig    `mapstructure:"snapshot"`
+	RingBuffer  RingBufferConfig  `mapstructure:"ringbuffer"`
+	Churn       ChurnConfig       `mapstructure:"churn"`
+	Pull        PullConfig        `mapstructure:"pull"`
+	Compression CompressionConfig `mapstructure:"compression"`
 
 	DrilldownHint bool         `mapstructure:"drilldown_hint"`
 	Tiers         []TierConfig `mapstructure:"tiers"`
@@ -272,6 +290,15 @@ func (cfg *Config) Validate() error {
 	}
 	requirePositiveDur(cfg.EpochRotate, "epoch_rotate")
 	requirePositiveDur(cfg.SeriesTTL, "series_ttl")
+	if cfg.EpochJitterWindow > cfg.EpochRotate {
+		errs = append(errs, fmt.Errorf("epoch_jitter_window (%s) must not exceed epoch_rotate (%s): a jitter wider than the epoch would delay a rotation past the next one", cfg.EpochJitterWindow, cfg.EpochRotate))
+	}
+
+	switch cfg.Compression.Codec {
+	case "", "none", "gzip", "zstd":
+	default:
+		errs = append(errs, fmt.Errorf("compression.codec: unknown value %q (want none, gzip, or zstd)", cfg.Compression.Codec))
+	}
 
 	if cfg.Storm.EnergyMultiplier <= 1 {
 		errs = append(errs, errors.New("storm.energy_multiplier must be > 1"))

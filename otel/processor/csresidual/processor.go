@@ -130,6 +130,10 @@ type metricsProcessor struct {
 	views            []viewSpec
 	tierRules        tier.CompiledRules
 	goldenEvery      int
+	// codec is the Codec (ADR-006 §Addendum) stamped on every frame this
+	// processor emits and used to compress its KEYFRAME payload and
+	// snapshot blob, resolved once from cfg.Compression.Codec.
+	codec wire.Codec
 
 	sink frameSink
 
@@ -192,6 +196,10 @@ func newMetricsProcessor(cfg *Config, logger *zap.Logger, sink frameSink) (*metr
 	if err != nil {
 		return nil, err
 	}
+	codec, err := resolveCodec(cfg.Compression.Codec)
+	if err != nil {
+		return nil, err
+	}
 	if sink == nil {
 		switch resolveOutputType(cfg) {
 		case outputTypeKafka:
@@ -214,6 +222,7 @@ func newMetricsProcessor(cfg *Config, logger *zap.Logger, sink frameSink) (*metr
 		views:            resolveViews(cfg),
 		tierRules:        tierRules,
 		goldenEvery:      goldenEvery,
+		codec:            codec,
 		sink:             sink,
 		pipelines:        make(map[pipelineKey]*pipeline),
 		now:              time.Now,
@@ -481,7 +490,7 @@ func (p *metricsProcessor) getOrCreatePipeline(shardID uint64, v viewSpec, now t
 }
 
 func (p *metricsProcessor) newPipeline(shardID uint64, v viewSpec, now time.Time) *pipeline {
-	epoch := epochIndex(now, p.cfg.EpochRotate)
+	epoch := epochIndex(now, p.cfg.EpochRotate, p.cfg.EpochJitterWindow, p.emitterID)
 	seed := deriveSeed(p.tenantKey, shardID, uint32(epoch), v.id)
 	pred := predict.NewHold()
 	breaker := newBreaker(p.cfg.Churn)
@@ -567,7 +576,7 @@ func (p *metricsProcessor) flushAll(now time.Time) {
 // resulting frame. Caller must hold pl.mu.
 func (p *metricsProcessor) flushPipeline(pl *pipeline, now time.Time) {
 	forceGolden := false
-	if newEpoch := epochIndex(now, p.cfg.EpochRotate); newEpoch != pl.epoch {
+	if newEpoch := epochIndex(now, p.cfg.EpochRotate, p.cfg.EpochJitterWindow, p.emitterID); newEpoch != pl.epoch {
 		p.rotateEpoch(pl, newEpoch, now)
 		forceGolden = true
 	}
@@ -612,6 +621,7 @@ func (p *metricsProcessor) flushPipeline(pl *pipeline, now time.Time) {
 	f.Bits = uint8(p.cfg.Bits)
 	f.Energy = float32(energy)
 	f.KeyVersion = p.activeKeyVersion // ADR-012 §Addendum: stamp the active key version
+	f.Codec = p.codec                 // ADR-006 §Addendum: governs SnapshotBlob and, for KEYFRAME, Payload
 
 	keyframeWindow := pl.seq%uint32(p.cfg.KeyframeEvery) == 0
 	switch {
@@ -625,13 +635,11 @@ func (p *metricsProcessor) flushPipeline(pl *pipeline, now time.Time) {
 	}
 
 	if entries := pl.snap.drain(now); len(entries) > 0 {
-		blob, err := wire.EncodeSnapshot(entries, true)
+		blob, err := wire.EncodeSnapshot(entries, p.codec)
 		if err != nil {
 			p.logger.Error("csresidual: EncodeSnapshot", zap.Error(err))
 		} else {
 			f.SnapshotBlob = blob
-			// v2: use the Codec field rather than the deprecated FlagGzip bit.
-			f.Codec = wire.CodecGzip
 		}
 	}
 
@@ -692,6 +700,11 @@ func (p *metricsProcessor) buildKeyframe(pl *pipeline, f *wire.Frame, forceGolde
 	payload, flags, err := wire.EncodeKeyframe(ids, values32, pl.prevKeyframeValues, golden, scale)
 	if err != nil {
 		p.logger.Error("csresidual: EncodeKeyframe", zap.Error(err))
+		payload, flags = nil, 0
+	} else if payload, err = wire.CompressPayload(p.codec, payload); err != nil {
+		// ADR-006 §Addendum: the same codec that governs the snapshot
+		// blob also governs a KEYFRAME's payload end-to-end.
+		p.logger.Error("csresidual: compress keyframe payload", zap.Error(err))
 		payload, flags = nil, 0
 	}
 

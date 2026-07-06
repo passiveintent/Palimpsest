@@ -468,7 +468,7 @@ func TestHotInstanceResidualAndSnapshot(t *testing.T) {
 	if len(last.SnapshotBlob) == 0 {
 		t.Fatal("expected a snapshot blob on the hot-instance window's frame, got none")
 	}
-	entries, err := wire.DecodeSnapshot(last.SnapshotBlob, last.Codec == wire.CodecGzip || last.Flags&wire.FlagGzip != 0)
+	entries, err := wire.DecodeSnapshot(last.SnapshotBlob, last.Codec)
 	if err != nil {
 		t.Fatalf("DecodeSnapshot: %v", err)
 	}

@@ -90,6 +90,7 @@ type Metrics struct {
 	lateFramesDropped      int64
 	duplicateFramesDropped int64
 	keyringMiss            int64 // frames gated because key_version not in KeyRing (ADR-012)
+	unregisteredCodec      int64 // frame/blob named a Codec with no registered Compressor (ADR-006 §Addendum)
 
 	mergedWindows *labeled // key: trust ("proven"|"unproven"|"na") -> count (ADR-015)
 
@@ -231,6 +232,16 @@ func (m *Metrics) KeyringMisses() int64 {
 	return m.getInt64(&m.keyringMiss)
 }
 
+// IncUnregisteredCodec records a frame or blob naming a Codec (Frame.Codec)
+// with no Compressor registered for it (wire.Register / ErrUnregisteredCodec;
+// ADR-006 §Addendum). Like IncKeyringMiss, this is never a silent drop: the
+// caller gates the affected stream/window at low confidence and counts it
+// here instead.
+func (m *Metrics) IncUnregisteredCodec() { m.addInt64(&m.unregisteredCodec, 1) }
+func (m *Metrics) UnregisteredCodec() int64 {
+	return m.getInt64(&m.unregisteredCodec)
+}
+
 // IncMergedWindows records one merged-tier window solve's ADR-015 trust
 // guardrail verdict (trust is recover.MergedTrustProven/Unproven; callers
 // never record MergedTrustNA here since evaluateMergedTrust only calls this
@@ -269,6 +280,7 @@ func (m *Metrics) Snapshot() map[string]any {
 		"late_frames_dropped":      m.LateFramesDropped(),
 		"duplicate_frames_dropped": m.DuplicateFramesDropped(),
 		"keyring_miss":             m.KeyringMisses(),
+		"unregistered_codec":       m.UnregisteredCodec(),
 		"merged_windows":           m.mergedWindows.snapshot(),
 	}
 }

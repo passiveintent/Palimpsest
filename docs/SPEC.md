@@ -44,8 +44,16 @@ full dict. Epochs are independent coordinate systems.
       (if set, KEYFRAME payload is delta-coded)
     key_version: identifies the HKDF tenant_key generation used for seed
       derivation (ADR-012 §Addendum). First byte after predictor in v2.
-    codec: 0=none, 1=gzip, 2=zstd (reserved; implementation deferred).
-      Replaces flags.bit0 for snapshot blob compression in v2 frames.
+    codec: 0=none, 1=gzip, 2=zstd. Governs snapshot_blob (replacing
+      flags.bit0 from v1) and, for KEYFRAME frames, payload too ("Keyframe
+      + snapshot payloads honor the codec byte end-to-end", ADR-006
+      §Addendum). RESIDUAL/FALLBACK payloads are never compressed.
+      Compressors are registered per-process (pkg/wire.Register); none/gzip
+      are always registered, zstd requires the zstdcodec leaf package's
+      Register to have run (cmd/palimpsestd, cmd/plsim,
+      otel/processor/csresidual all call it at startup). A codec with no
+      registered Compressor decodes as ErrUnregisteredCodec: the frame is
+      gated at low confidence and counted, never silently dropped.
 
     Version compatibility:
       Encoder MUST write v2 only.
@@ -83,3 +91,8 @@ and re-solve. Results carry revision counter; downstream sinks upsert on key.
 seq is WINDOW INDEX, not a sequence counter. Clock drift causes window-boundary
 sample smear (~drift/flush), not misalignment. Per-emitter clock skew is
 measured and alerted (tolerance: tens of ms, NTP-grade fleets are safe).
+
+Epoch rotation is jittered per emitter (ADR-013 §Addendum "herd jitter"):
+emitter `e`'s epoch index is `floor((t - jitter_e) / epoch_rotate)` where
+`jitter_e = xxh64(emitter_id) % jitter_window` (config, default 60s) — no
+wire change, since both sides derive `jitter_e` from `emitter_id` alone.

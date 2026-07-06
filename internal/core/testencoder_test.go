@@ -35,6 +35,7 @@ const minTestQuantScale = 1e-6
 // decoupling "which window is this" from "how many times have I called
 // flush".
 type testEncoder struct {
+	tenantKey          []byte
 	shardID, emitterID uint64
 	viewID             uint16
 	epoch              uint64
@@ -57,7 +58,8 @@ func newTestEncoder(tenantKey []byte, shardID, emitterID uint64, viewID uint16, 
 	seed := sketch.DeriveEphemeralSeed(tenantKey, shardID, uint32(epoch), viewID)
 	pred := predict.NewHold()
 	return &testEncoder{
-		shardID: shardID, emitterID: emitterID, viewID: viewID, epoch: epoch,
+		tenantKey: tenantKey,
+		shardID:   shardID, emitterID: emitterID, viewID: viewID, epoch: epoch,
 		m: m, d: d, bits: bits, seed: seed,
 		tracker:       sketch.NewTracker(pred, nil),
 		acc:           sketch.NewAccumulator(sketch.Params{M: m, D: d, Seed: seed, Bits: bits}),
@@ -147,6 +149,32 @@ func (e *testEncoder) flush(now time.Time, seq uint32, values map[string]float64
 
 	e.tracker.ResetWindow()
 	return f
+}
+
+// rotateEpoch mirrors otel/processor/csresidual's (*metricsProcessor).
+// rotateEpoch: it starts a fresh (epoch-keyed) Accumulator/Tracker/
+// Predictor under newEpoch, re-birthing every series active just before
+// rotation at its last known value so the new epoch's opening golden
+// keyframe (ADR-013: "every emitter MUST open each epoch stream with
+// golden keyframe + full dict") carries it forward rather than losing it.
+func (e *testEncoder) rotateEpoch(now time.Time, newEpoch uint64) {
+	prevActive := e.tracker.FullDict()
+
+	seed := sketch.DeriveEphemeralSeed(e.tenantKey, e.shardID, uint32(newEpoch), e.viewID)
+	pred := predict.NewHold()
+	tracker := sketch.NewTracker(pred, nil)
+	acc := sketch.NewAccumulator(sketch.Params{M: e.m, D: e.d, Seed: seed, Bits: e.bits})
+
+	for _, dd := range prevActive {
+		tracker.Observe(dd.Name, float64(dd.InitValue), now)
+	}
+
+	e.epoch = newEpoch
+	e.tracker = tracker
+	e.acc = acc
+	e.pred = pred
+	e.prevKeyframeValues = nil
+	e.keyframeCount = 0
 }
 
 // residualScale mirrors otel/processor/csresidual's adaptiveScale: the

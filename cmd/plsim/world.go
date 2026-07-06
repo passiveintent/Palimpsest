@@ -52,16 +52,6 @@ func (g *group) logicalName(shardID uint64, agg string) string {
 	return fmt.Sprintf("%s|shard=%d|agg=%s", g.name, shardID, agg)
 }
 
-// seriesIDs returns this group's three logical series IDs (sum, count,
-// max), in that order, for the given shard.
-func (g *group) seriesIDs(shardID uint64) [3]uint64 {
-	var ids [3]uint64
-	for i, agg := range aggregates {
-		ids[i] = sketch.SeriesID([]byte(g.logicalName(shardID, agg)))
-	}
-	return ids
-}
-
 // WorldConfig configures the synthetic instance/group population.
 type WorldConfig struct {
 	ShardID           uint64
@@ -144,10 +134,6 @@ func NewWorld(cfg WorldConfig) *World {
 	w.nextIdx = cfg.LogicalSeries
 	return w
 }
-
-// Groups returns every group, including retired ones (callers should check
-// Retired before treating a group as live).
-func (w *World) Groups() []*group { return w.groups }
 
 // ReserveForAnomaly picks up to n distinct plain (non-hot, non-drifting)
 // groups and removes them from the churn-eligible pool, so a scheduled

@@ -69,7 +69,9 @@ func createDefaultConfig() component.Config {
 		KeyframeFullDictEvery: 10,
 		GoldenKeyframeEvery:   10,
 		EpochRotate:           time.Hour,
+		EpochJitterWindow:     60 * time.Second,
 		SeriesTTL:             90 * time.Second,
+		Compression:           CompressionConfig{Codec: "gzip"},
 		Storm: StormConfig{
 			EnergyMultiplier: 25,
 			FallbackTopK:     100,

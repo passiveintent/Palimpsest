@@ -31,7 +31,15 @@ processors:
     keyframe_full_dict_every: 10
     golden_keyframe_every: 10
     epoch_rotate: 1h
+    epoch_jitter_window: 60s
     series_ttl: 90s
+    # docs/PERF.md "Codec comparison": zstd measured ~20% smaller AND
+    # ~3-7x less CPU than gzip on a realistic 50k-series golden keyframe
+    # (ADR-006 §Addendum) — adopted here in the demo config per that
+    # result; palimpsestd registers zstd unconditionally so it decodes
+    # these frames regardless of this setting.
+    compression:
+      codec: zstd
     storm:
       energy_multiplier: 25
       fallback_topk: 50

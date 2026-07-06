@@ -38,16 +38,18 @@ func deriveSeed(tenantKey []byte, shardID uint64, epochIdx uint32, viewID uint16
 }
 
 // epochIndex returns the ADR-013 epoch index for t: a wall-clock-aligned
-// bucket of width rotate. Using an absolute wall-clock bucket (rather than
-// a process-start-relative counter) means independent emitters/restarts
-// that share a rotate interval land on the same epoch boundaries, which is
-// what lets a decoder treat "epoch" as a coordinate system independent of
-// any single agent's uptime.
-func epochIndex(t time.Time, rotate time.Duration) uint64 {
-	if rotate <= 0 {
-		return 0
-	}
-	return uint64(t.UnixNano() / rotate.Nanoseconds())
+// bucket of width rotate, delayed by emitterID's deterministic
+// sketch.EpochJitter offset into [0, jitterWindow) (ADR-013 §Addendum
+// "herd jitter": spreads a fleet sharing one rotate interval across
+// jitterWindow instead of all rotating at the same instant). Using an
+// absolute wall-clock bucket (rather than a process-start-relative counter)
+// means independent emitters/restarts that share a rotate interval still
+// land on the same *unshifted* boundaries, which is what lets a decoder
+// treat "epoch" as a coordinate system independent of any single agent's
+// uptime; jitterWindow only shifts *when* each emitter crosses that
+// boundary, never the boundary grid itself.
+func epochIndex(t time.Time, rotate, jitterWindow time.Duration, emitterID uint64) uint64 {
+	return sketch.EpochIndex(t, rotate, jitterWindow, emitterID)
 }
 
 // loadKeyRing builds a sketch.KeyRing from cfg.TenantKeys. Each entry's key

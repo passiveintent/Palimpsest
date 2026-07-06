@@ -47,6 +47,51 @@ adjusted or re-run selectively; reported as measured.
 | `BenchmarkDequantize` (m=2048) | 10,488 | 16,384 | 1 |
 | `BenchmarkEncode` (Quantize+Marshal, m=2000, bits=8) | 18,995 | 4,352 | 2 |
 
+## Codec comparison: zstd vs gzip vs none (ADR-006 §Addendum)
+
+This is the ADR-006 §Addendum's Compressor registry acceptance measurement:
+zstd (`zstdcodec`, `github.com/klauspost/compress/zstd`) vs gzip
+(`compress/gzip`, stdlib) vs no compression, on a realistic golden
+(Full-encoded) KEYFRAME payload at N=50,000 series — the same scale
+`docs/PERF.md`'s recovery numbers use, and large enough that a KEYFRAME's
+byte-parity problem (ADR-011: "a full keyframe is not smaller than raw
+remote-write") is worth paying compression CPU to fix. Measured via
+`zstdcodec`'s `TestCodecSizeComparison` (bytes) and
+`BenchmarkCompress`/`BenchmarkDecompress` (CPU), `go test -bench=. -benchmem
+./zstdcodec/...`:
+
+| Codec | Bytes | B/series | % of raw | Compress | Decompress |
+| --- | --- | --- | --- | --- | --- |
+| none | 600,004 | 12.00 | 100.0% | 25.8 ns/op | 24.8 ns/op |
+| gzip | 152,309 | 3.05 | 25.4% | 27.27 ms/op | 2.16 ms/op |
+| zstd | 121,084 | 2.42 | 20.2% | 3.74 ms/op | 0.70 ms/op |
+
+(raw payload: 600,004 bytes, 12.00 B/series — matches the "Keyframe
+bytes/series" section above exactly, since it's the same Full encoding.)
+
+**Decision: adopt zstd.** Unlike most compression tradeoffs, this one
+isn't a bytes-vs-CPU tradeoff at all — zstd wins on both axes at once: 20%
+smaller than gzip (121,084 vs 152,309 bytes) *and* ~7.3x faster to compress
+(3.74ms vs 27.27ms) and ~3.1x faster to decompress (0.70ms vs 2.16ms).
+`demo/otelcol-config.yaml` sets `compression.codec: zstd` accordingly. The
+package default (`otel/processor/csresidual/factory.go`'s
+`createDefaultConfig`) stays `gzip`, deliberately not changed by this
+result: it preserves the pre-existing snapshot-blob behavior for any
+config that doesn't set `compression.codec` explicitly, rather than
+silently changing an existing deployment's wire bytes and CPU profile.
+Operators upgrading are expected to opt into `zstd` deliberately (this
+measurement is the evidence for doing so), not have it silently flipped
+under them.
+
+**Method note**: gzip's compress cost here (27.27ms) is far higher than
+its decompress cost (2.16ms) — expected (DEFLATE's compressor does the
+expensive match-finding; the decompressor is comparatively cheap) — and is
+the concrete cost ADR-011's "golden keyframes carry no savings, only
+correctness" cadence exists to bound: golden keyframes fire on
+`golden_keyframe_every`, not every window, precisely because a Full
+encoding is this expensive to both transmit and (with compression enabled)
+compress.
+
 ## Recovery (`pkg/recover`)
 
 ### Prompt 12 performance pass (parallel matvec + float32 + fusion + early-exit)

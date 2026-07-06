@@ -78,7 +78,7 @@ func (rb *RingBuffer) Snapshot() []byte {
 	for i, s := range rb.samples {
 		entries[i] = wire.SnapshotEntry{ID: rb.id, TSMs: s.tsMs, Value: float32(s.value)}
 	}
-	blob, err := wire.EncodeSnapshot(entries, false)
+	blob, err := wire.EncodeSnapshot(entries, wire.CodecNone)
 	if err != nil {
 		// EncodeSnapshot only fails compressing (gzip disabled above);
 		// reaching this indicates a wire package invariant broke.

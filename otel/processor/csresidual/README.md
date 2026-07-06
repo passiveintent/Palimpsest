@@ -41,8 +41,9 @@ this module isn't published standalone) stay stdlib + xxhash only.
    `keyframe_full_dict_every`, ADR-011), `FALLBACK` on a storm-energy
    trigger (ADR-004), else `RESIDUAL`. A churn breaker (ADR-009) degrades a
    crash-looping pipeline to aggregate-only buffering; a snapshot stager
-   (ADR-009/ADR-012) attaches a gzip instance-ring-buffer blob to the frame
-   when a logical series' local z-score crosses `snapshot.residual_threshold`.
+   (ADR-009/ADR-012) attaches a compressed (`compression.codec`, ADR-006
+   §Addendum) instance-ring-buffer blob to the frame when a logical
+   series' local z-score crosses `snapshot.residual_threshold`.
 6. Writes each frame out via `output.type` (`file`, the default, or
    `kafka`), unless a custom `frameSink` is wired in (as the test suite
    does, in-memory). `file` writes one file per frame under `output.dir`
@@ -141,7 +142,13 @@ processors:
     golden_keyframe_every: 10              # alias for the field above (docs/SPEC.md's own name for it);
                                             # set only one, or set both to the same value
     epoch_rotate: 1h                       # ADR-013: new independent coordinate system every rotate interval
+    epoch_jitter_window: 60s               # ADR-013 §Addendum: stagger this emitter's rotation by up to this
+                                            # much past each boundary (deterministic per emitter_id), so a fleet
+                                            # sharing epoch_rotate doesn't all rebuild + golden-keyframe at once
     series_ttl: 90s                        # logical series silent this long -> tombstoned
+
+    compression:                           # ADR-006 §Addendum: codec for KEYFRAME payloads + snapshot blobs
+      codec: gzip                          # none, gzip, or zstd (docs/PERF.md: zstd wins on bytes AND CPU)
 
     storm:                                 # ADR-004
       energy_multiplier: 25                # trigger FALLBACK when energy > multiplier * rolling median

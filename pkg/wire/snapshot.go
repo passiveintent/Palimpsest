@@ -7,16 +7,15 @@
 
 package wire
 
-import (
-	"bytes"
-	"compress/gzip"
-	"fmt"
-	"io"
-)
+import "fmt"
 
-// maxSnapshotDecompressedBytes bounds gzip decompression of an untrusted
-// snapshot blob so a crafted small input can't exhaust memory.
-const maxSnapshotDecompressedBytes = 64 << 20
+// MaxDecompressedBytes bounds decompression of untrusted compressed bytes (a
+// SnapshotBlob, or a KEYFRAME Payload) so a crafted small input can't
+// exhaust memory ("zip bomb"), regardless of which Codec produced it.
+// Exported so callers decompressing a KEYFRAME Payload themselves (e.g.
+// internal/core's decode path) can bound it the same way EncodeSnapshot/
+// DecodeSnapshot do.
+const MaxDecompressedBytes = 64 << 20
 
 // SnapshotEntry is one instance-level ring-buffer sample (ADR-012, ADR-008:
 // instance labels ride the ring buffer rather than the sketch).
@@ -27,47 +26,25 @@ type SnapshotEntry struct {
 }
 
 // EncodeSnapshot serializes entries as count u32 + repeated{id u64,
-// ts_ms u64, value f32} (docs/SPEC.md), gzip-compressing the result when
-// gzipCompress is true (Frame.Flags bit0, FlagGzip).
-func EncodeSnapshot(entries []SnapshotEntry, gzipCompress bool) ([]byte, error) {
+// ts_ms u64, value f32} (docs/SPEC.md), then compresses the result with
+// the Compressor registered for codec (Register; ADR-006 §Addendum).
+// Returns ErrUnregisteredCodec if codec has none registered.
+func EncodeSnapshot(entries []SnapshotEntry, codec Codec) ([]byte, error) {
 	buf := appendU32(nil, uint32(len(entries)))
 	for _, e := range entries {
 		buf = appendU64(buf, e.ID)
 		buf = appendU64(buf, e.TSMs)
 		buf = appendF32(buf, e.Value)
 	}
-	if !gzipCompress {
-		return buf, nil
-	}
-	var out bytes.Buffer
-	gw := gzip.NewWriter(&out)
-	if _, err := gw.Write(buf); err != nil {
-		return nil, fmt.Errorf("wire: gzip snapshot: %w", err)
-	}
-	if err := gw.Close(); err != nil {
-		return nil, fmt.Errorf("wire: gzip snapshot: %w", err)
-	}
-	return out.Bytes(), nil
+	return CompressPayload(codec, buf)
 }
 
-// DecodeSnapshot decodes a blob produced by EncodeSnapshot. gzipped must
-// match the FlagGzip bit the frame was marked with.
-func DecodeSnapshot(blob []byte, gzipped bool) ([]SnapshotEntry, error) {
-	raw := blob
-	if gzipped {
-		gr, err := gzip.NewReader(bytes.NewReader(blob))
-		if err != nil {
-			return nil, fmt.Errorf("%w: gunzip snapshot: %v", ErrInvalidFrame, err)
-		}
-		defer gr.Close()
-		decoded, err := io.ReadAll(io.LimitReader(gr, maxSnapshotDecompressedBytes+1))
-		if err != nil {
-			return nil, fmt.Errorf("%w: gunzip snapshot: %v", ErrInvalidFrame, err)
-		}
-		if len(decoded) > maxSnapshotDecompressedBytes {
-			return nil, fmt.Errorf("%w: snapshot decompresses to more than %d bytes", ErrInvalidFrame, maxSnapshotDecompressedBytes)
-		}
-		raw = decoded
+// DecodeSnapshot decodes a blob produced by EncodeSnapshot. codec must
+// match the Codec the frame carrying blob was marked with (Frame.Codec).
+func DecodeSnapshot(blob []byte, codec Codec) ([]SnapshotEntry, error) {
+	raw, err := DecompressPayload(codec, blob, MaxDecompressedBytes)
+	if err != nil {
+		return nil, err
 	}
 
 	r := &reader{b: raw}

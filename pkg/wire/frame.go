@@ -78,15 +78,27 @@ const (
 	FlagKDelta uint8 = 1 << 1
 )
 
+// Codec identifies the compression scheme applied to a frame's compressible
+// bytes (Frame.SnapshotBlob always; Frame.Payload too when FrameType is
+// FrameTypeKeyframe — docs/SPEC.md, ADR-006 §Addendum). It is a distinct
+// type from the wire's raw uint8 so Register/CompressPayload/
+// DecompressPayload (compress.go) can't be called with an arbitrary byte
+// that was never meant to be a codec id.
+type Codec uint8
+
 // Codec values for Frame.Codec (v2 and later; docs/SPEC.md).
 const (
-	// CodecNone means no compression is applied to the snapshot blob.
-	CodecNone uint8 = 0
-	// CodecGzip means the snapshot blob is gzip-compressed.
+	// CodecNone means no compression is applied.
+	CodecNone Codec = 0
+	// CodecGzip means gzip compression (compress/gzip, stdlib).
 	// Mirrors the deprecated FlagGzip for v1 decode compatibility.
-	CodecGzip uint8 = 1
-	// CodecZstd is reserved; implementation is deferred.
-	CodecZstd uint8 = 2
+	CodecGzip Codec = 1
+	// CodecZstd is zstd compression. pkg/wire has no zstd implementation
+	// of its own (ADR-007: pkg/* stays stdlib+xxhash) — a Compressor for
+	// it must be Register-ed by a caller outside pkg/* (e.g. the
+	// zstdcodec leaf package) before any frame carrying this codec can be
+	// encoded or decoded.
+	CodecZstd Codec = 2
 )
 
 // DictDelta flag bits (ADR-008).
@@ -120,10 +132,12 @@ type Frame struct {
 	// derivation (ADR-012 §Addendum). Introduced in wire v2; v1 frames
 	// imply KeyVersion=0 on decode.
 	KeyVersion uint8
-	// Codec identifies the compression applied to the snapshot blob (v2+).
-	// 0=none, 1=gzip, 2=zstd (reserved). Replaces flags.bit0 (FlagGzip)
-	// from v1; v1 frames derive Codec from FlagGzip on decode.
-	Codec uint8
+	// Codec identifies the compression applied to SnapshotBlob and, for
+	// FrameTypeKeyframe, Payload too (v2+; ADR-006 §Addendum). Replaces
+	// flags.bit0 (FlagGzip) from v1; v1 frames derive Codec from FlagGzip
+	// on decode. See compress.go for the registry that maps this value to
+	// a Compressor.
+	Codec Codec
 
 	Energy     float32
 	QuantScale float32

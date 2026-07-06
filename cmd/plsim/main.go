@@ -68,6 +68,7 @@ type flags struct {
 
 	snapshotThreshold float64
 	ringWindow        time.Duration
+	codec             string
 
 	baseline float64
 	// noise defaults to 0 deliberately: compressed-sensing recovery
@@ -125,6 +126,7 @@ func parseFlags() flags {
 
 	flag.Float64Var(&f.snapshotThreshold, "snapshot-threshold", 20.0, "absolute residual magnitude above which a speculative dashcam snapshot is attached to the frame (ADR-009/ADR-012); <=0 disables")
 	flag.DurationVar(&f.ringWindow, "ring-window", 15*time.Minute, "per-series ring buffer retention backing snapshots")
+	flag.StringVar(&f.codec, "codec", "none", "compression codec for KEYFRAME payloads and snapshot blobs (ADR-006 §Addendum): none, gzip, or zstd")
 
 	flag.Float64Var(&f.baseline, "baseline", 100.0, "steady-state per-instance value")
 	flag.Float64Var(&f.noise, "noise", 0, "uniform random per-instance read noise amplitude; nonzero values are not recommended (see README note on this flag)")
@@ -149,6 +151,11 @@ func run() error {
 
 	rng := rand.New(rand.NewSource(f.seed))
 	tenantKey := []byte(f.tenantKey)
+
+	codec, err := resolveCodec(f.codec)
+	if err != nil {
+		return err
+	}
 
 	world := NewWorld(WorldConfig{
 		ShardID:           f.shardID,
@@ -237,6 +244,7 @@ func run() error {
 				SeriesTTL:         f.seriesTTL,
 				SnapshotThreshold: f.snapshotThreshold,
 				RingWindow:        f.ringWindow,
+				Codec:             codec,
 			})
 		}
 	}

@@ -232,8 +232,8 @@ func Recover(y []float64, dict *Dictionary, p sketch.Params, o Options) (Result,
 		// cap so cross-talk-boosted AZ members don't crowd out scattered singletons.
 		ompRows := cappedSupport(x, o.Threshold, p.M/ompContextCap)
 		// Reuse this call's pool/csr (Group-OMP's residual scan is one more
-		// MulInto — Addendum A3) instead of the exported RecoverGroupOMP,
-		// which would rebuild both from scratch.
+		// MulInto — Addendum A3); calling recoverGroupOMP directly avoids
+		// rebuilding the CSR and matvec pool from scratch.
 		gr, gerr := recoverGroupOMP(pool, csr, y, dict, p, grouper, x, ompRows, xRestarts, xIters, o)
 		if gerr == nil && gr.Residual < plainResidual {
 			return gr, nil

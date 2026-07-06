@@ -59,7 +59,7 @@ func Marshal(f *Frame) ([]byte, error) {
 	buf = appendU8(buf, f.D)
 	buf = appendU8(buf, f.Predictor)
 	buf = appendU8(buf, f.KeyVersion)
-	buf = appendU8(buf, f.Codec)
+	buf = appendU8(buf, uint8(f.Codec))
 	buf = appendF32(buf, f.Energy)
 	buf = appendF32(buf, f.QuantScale)
 	buf = appendU64(buf, f.DictRoot)
@@ -169,9 +169,11 @@ func Unmarshal(b []byte) (*Frame, error) {
 		if f.KeyVersion, err = r.u8(); err != nil {
 			return nil, err
 		}
-		if f.Codec, err = r.u8(); err != nil {
-			return nil, err
+		codecByte, err2 := r.u8()
+		if err2 != nil {
+			return nil, err2
 		}
+		f.Codec = Codec(codecByte)
 	}
 	if f.Energy, err = r.f32(); err != nil {
 		return nil, err

@@ -82,9 +82,8 @@ const (
 // matvecPool parallelizes one CSR's MulInto/MulTransposeInto across a
 // small set of persistent goroutines. Build with newMatvecPool and Close
 // it when the solve finishes. Not safe for concurrent MulInto/
-// MulTransposeInto/Close calls — one Recover/RecoverGroup/RecoverGroupOMP
-// call drives it sequentially, matching fista's single-threaded iteration
-// loop.
+// MulTransposeInto/Close calls — one Recover/RecoverGroup call drives it
+// sequentially, matching fista's single-threaded iteration loop.
 type matvecPool struct {
 	csr      *CSR
 	nWorkers int

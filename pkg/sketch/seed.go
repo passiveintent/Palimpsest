@@ -45,20 +45,6 @@ func DeriveEphemeralSeed(tenantKey []byte, shardID uint64, epochIdx uint32, view
 // still be decoded within repair_horizon (ADR-013).
 type KeyRing map[uint8][]byte
 
-// Active returns the highest-numbered key version and its key material.
-// If the ring is empty it returns (0, nil).
-func (r KeyRing) Active() (version uint8, key []byte) {
-	first := true
-	for v, k := range r {
-		if first || v > version {
-			version = v
-			key = k
-			first = false
-		}
-	}
-	return version, key
-}
-
 // Lookup returns the key material for the given version.
 // The second return value is false if the version is not in the ring.
 func (r KeyRing) Lookup(version uint8) ([]byte, bool) {
