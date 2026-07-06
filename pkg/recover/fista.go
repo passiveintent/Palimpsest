@@ -149,6 +149,15 @@ func Recover(y []float64, dict *Dictionary, p sketch.Params, o Options) (Result,
 
 	x, xRestarts := fista(csr, y, lambdaAbs, o.Iters, o.PowerIters)
 
+	// ompContextCap (M/5): plain-support context passed to Group-OMP. Larger
+	// than the plain-path cap so cross-talk-boosted AZ members do not displace
+	// scattered singletons from the working set (ADR-014 §Algorithm, step 1).
+	const ompContextCap = 5
+	// escalationCap (M/10): plain-path result cap AND the support-density
+	// escalation trigger. Two functions, same constant: any plain support denser
+	// than M/10 signals the phase-transition regime (ADR-004/ADR-014).
+	const escalationCap = 10
+
 	// Full (uncapped) support — used for the escalation support-density check.
 	rawSupportLen := 0
 	for _, v := range x {
@@ -157,8 +166,8 @@ func Recover(y []float64, dict *Dictionary, p sketch.Params, o Options) (Result,
 		}
 	}
 
-	// Cap support to M/10, keeping the highest-|x_i| candidates.
-	support := cappedSupport(x, o.Threshold, p.M/10)
+	// Cap support to M/escalationCap, keeping the highest-|x_i| candidates.
+	support := cappedSupport(x, o.Threshold, p.M/escalationCap)
 
 	supportIDs := make([]uint64, len(support))
 	for i, row := range support {
@@ -183,15 +192,14 @@ func Recover(y []float64, dict *Dictionary, p sketch.Params, o Options) (Result,
 	// is 10–100× faster and immune to the block-threshold momentum latch.
 	// Winner selection: escalation result returned only if its debiased
 	// residual is strictly lower than the plain path's.
-	if o.EscalateThreshold > 0 && (plainResidual > o.EscalateThreshold || rawSupportLen > p.M/10) {
+	if o.EscalateThreshold > 0 && (plainResidual > o.EscalateThreshold || rawSupportLen > p.M/escalationCap) {
 		grouper := o.Grouper
 		if grouper == nil {
 			grouper = DefaultGrouper()
 		}
-		// Use M/5 as OMP context (double the plain M/10 cap) so scattered
-		// singletons displaced from the top M/10 by cross-talk-boosted
-		// AZ members are still included in the Group-OMP residual computation.
-		ompRows := cappedSupport(x, o.Threshold, p.M/5)
+		// Use ompContextCap (M/5) as OMP working set — wider than the plain-path
+		// cap so cross-talk-boosted AZ members don't crowd out scattered singletons.
+		ompRows := cappedSupport(x, o.Threshold, p.M/ompContextCap)
 		gr, gerr := RecoverGroupOMP(y, dict, p, grouper, x, ompRows, xRestarts, o)
 		if gerr == nil && gr.Residual < plainResidual {
 			return gr, nil

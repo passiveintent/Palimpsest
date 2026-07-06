@@ -57,10 +57,16 @@ is **negative**, not positive. The restart criterion never fires on the exact
 latch event; it fires (if at all) on background-series oscillations that are
 unrelated to the group.
 
-### (c) Function-value restart fires post-latch
+### (c) Function-value restart fires post-latch — not on the latch itself
 
-The momentum-point function-value restart `F(z_new) > F(z_old)` was tried
-next. Diagnostic iteration table (oracle data, v=1 seed):
+Function-value restart `F(x_new) > F_best` was tried next. **Empirically confirmed
+mechanism:** at the exact latch iteration where the group transitions from
+`x_g > 0` to `x_g = 0`, the objective *decreases* — the L1 penalty drop
+(removing all 500 non-zero entries) outweighs the data-fit increase from losing
+the group's signal. This means F(x_new) < F_best at the latch, so the restart
+criterion is blind to the latch event itself. Restart fires only later, on
+unrelated non-monotone steps caused by Nesterov momentum overshoot on background
+series. Diagnostic iteration table (oracle data, v=1 seed):
 
 | iters | AZ above threshold | Scattered recall |
 |-------|--------------------|-----------------|
@@ -74,13 +80,16 @@ are zeroed. Restarting after the latch means `z_g = 0`; the next gradient
 does revive the group (restoring force brings `‖u_g‖` back above 0.031), but
 the accumulated Nesterov momentum re-latches it at a later iteration. A best-seen
 prox-iterate restart fires 2–5 times for easy cases and does NOT prevent the
-latch — it merely delays it.
+latch — it cannot, because the function value *drops* at the latch event itself.
 
 **Conclusion:** group-FISTA failure at this problem scale is structural, not
 tunable. The phase-transition landscape (k_series/m > 0.2) means there is no
 scalar λ that simultaneously (i) zeros background singletons and (ii) keeps the
-500-member group alive under momentum dynamics. The latch is sign-invisible to
-any gradient-based restart criterion.
+500-member group alive under momentum dynamics. The latch is invisible to both
+gradient-based restart (sign argument in §b) and function-value restart
+(objective decreases at latch, per §c).  The correct reframe: *we were asking
+an optimiser to answer a detection question, and the ruler was wrong, not the
+signal.*
 
 ---
 
@@ -178,8 +187,7 @@ One AZ-outage group: 500 series, label `region=az-east-1,cluster=prod`.
 * Wall-clock overhead: Group-OMP adds one plain FISTA solve + O(groups·|g|·d)
   correlation scan. At N=50 000 the ratio is ~1.2× (measured, see PERF.md §Group-OMP).
 
-*"FISTA trades monotonicity for speed; restart buys back monotonicity for the
-price of a dot product — and block thresholds make monotonicity non-optional."*
+*"We asked an optimiser to answer a detection question, and the ruler was wrong, not the signal."*
 
 
 **Status:** Accepted (implementation in progress)

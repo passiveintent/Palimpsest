@@ -166,9 +166,12 @@ func testGroupCaseLatchRecovery(t *testing.T, f groupCaseFile, dict *Dictionary,
 			scatterRecall, hit, len(f.ScatteredSupport))
 	}
 
-	// H0 z-score > 10 (assert; log expected O(10–70)).
+	// H0 z-score > 10 (assert; empirically ≈18σ at score=2.42, σ̂=1.53, |g|=500).
+	// Earlier prediction of "O(70)" was computed off an earlier score of 5.0
+	// that assumed zero AZ members in the plain context; the actual score is lower
+	// because ~87 AZ members end up in the M/10 diagnostic context. Still decisive.
 	zScore := computeAZZScore(t, f, dict, params, opts)
-	t.Logf("AZ H0 z-score = %.1f (assert > 10)", zScore)
+	t.Logf("AZ H0 z-score = %.1f (assert > 10; expected ≈18)", zScore)
 	if zScore < 10.0 {
 		t.Errorf("AZ H0 z-score = %.1f, want > 10", zScore)
 	}

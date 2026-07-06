@@ -90,13 +90,18 @@ func RecoverGroup(y []float64, dict *Dictionary, p sketch.Params, grouper Groupe
 		}, nil
 	}
 
+	// ompContextCap (M/5): plain-support context for Group-OMP. Larger than
+	// escalationCap so cross-talk-boosted AZ members do not displace scattered
+	// singletons from the working set (see fista.go for the rationale comment).
+	const ompContextCap = 5
+
 	// Run plain FISTA to get the initial context support for Group-OMP.
-	// Use M/5 (not M/10) so scattered singletons are not displaced by
-	// AZ-group members whose FISTA amplitudes are cross-talk boosted.
-	// The M/10 escalation trigger in Recover() is separate from this cap.
+	// Use M/ompContextCap (not M/escalationCap) so scattered singletons are not
+	// displaced by AZ-group members whose FISTA amplitudes are cross-talk boosted.
+	// The M/escalationCap escalation trigger in Recover() is separate from this cap.
 	lambdaAbs := scaledLambda(csr, y, o.Lambda, n)
 	x, xRestarts := fista(csr, y, lambdaAbs, o.Iters, o.PowerIters)
-	plainRows := cappedSupport(x, o.Threshold, p.M/5)
+	plainRows := cappedSupport(x, o.Threshold, p.M/ompContextCap)
 
 	return RecoverGroupOMP(y, dict, p, grouper, x, plainRows, xRestarts, o)
 }
