@@ -26,6 +26,7 @@ package metrics
 import (
 	"expvar"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -111,8 +112,18 @@ func New() *Metrics {
 	}
 }
 
+// frameKey builds IncFramesTotal/FramesTotal's composite label. Called on
+// every decoded frame (HandleFrame's first line), so this avoids
+// fmt.Sprintf's reflection-driven verb parsing in favor of strconv.Append*
+// into a stack buffer — the same "%s|%d|%d" shape, built without it.
 func frameKey(frameType string, emitterID, shardID uint64) string {
-	return fmt.Sprintf("%s|%d|%d", frameType, emitterID, shardID)
+	buf := make([]byte, 0, len(frameType)+1+20+1+20)
+	buf = append(buf, frameType...)
+	buf = append(buf, '|')
+	buf = strconv.AppendUint(buf, emitterID, 10)
+	buf = append(buf, '|')
+	buf = strconv.AppendUint(buf, shardID, 10)
+	return string(buf)
 }
 
 func pairKey(a, b string) string { return a + "|" + b }

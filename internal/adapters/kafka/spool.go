@@ -120,6 +120,12 @@ func (s *SpoolingSink) DrainOnce(ctx context.Context) error {
 // for the next attempt). Caller must hold s.mu. Returns drained=true only if
 // the backlog is now fully empty.
 func (s *SpoolingSink) drainLocked(ctx context.Context) (drained bool, err error) {
+	if s.spooledBytes == 0 {
+		// Nothing spooled (spoolLocked/removeLocked keep this exact,
+		// seeded from a real directory scan at construction): skip the
+		// directory listing on the common healthy-path Send.
+		return true, nil
+	}
 	entries, err := spoolFiles(s.dir)
 	if err != nil {
 		return false, err

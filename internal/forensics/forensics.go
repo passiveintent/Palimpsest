@@ -21,6 +21,7 @@
 package forensics
 
 import (
+	"container/list"
 	"sort"
 	"sync"
 	"time"
@@ -59,9 +60,17 @@ type SnapshotStore struct {
 	ttl      time.Duration
 	maxCount int
 
-	mu      sync.Mutex
-	byID    map[uint64]Snapshot
-	touched []uint64 // insertion/update order, oldest first, for capacity eviction
+	mu   sync.Mutex
+	byID map[uint64]Snapshot
+	// order holds each currently-stored id exactly once (uint64 element
+	// values), Front() the least-recently-(re)persisted and Back() the
+	// most recent; elems indexes into it for O(1) touch/removal. Every
+	// upsert both sets Snapshot.CapturedAt=now and moves the id to Back
+	// (touchLocked), so front-to-back order is exactly CapturedAt
+	// ascending — evictLocked's TTL sweep relies on that to stop at the
+	// first still-fresh entry instead of scanning the whole store.
+	order *list.List
+	elems map[uint64]*list.Element
 }
 
 // NewSnapshotStore returns a SnapshotStore evicting entries older than ttl
@@ -72,6 +81,8 @@ func NewSnapshotStore(ttl time.Duration, maxCount int) *SnapshotStore {
 		ttl:      ttl,
 		maxCount: maxCount,
 		byID:     make(map[uint64]Snapshot),
+		order:    list.New(),
+		elems:    make(map[uint64]*list.Element),
 	}
 }
 
@@ -123,7 +134,7 @@ func (s *SnapshotStore) SelectAndPersist(flaggedIDs []uint64, blob []byte, codec
 		}
 		snap := Snapshot{SeriesID: id, CapturedAt: now, Entries: es, sourceLatestMs: latest}
 		s.byID[id] = snap
-		s.touched = append(s.touched, id)
+		s.touchLocked(id)
 		out = append(out, snap)
 	}
 	s.evictLocked(now)
@@ -140,7 +151,7 @@ func (s *SnapshotStore) Get(seriesID uint64, now time.Time) (Snapshot, bool) {
 		return Snapshot{}, false
 	}
 	if s.ttl > 0 && now.Sub(snap.CapturedAt) > s.ttl {
-		delete(s.byID, seriesID)
+		s.removeLocked(seriesID)
 		return Snapshot{}, false
 	}
 	return snap, true
@@ -157,26 +168,62 @@ func (s *SnapshotStore) Prune(now time.Time) int {
 	return before - len(s.byID)
 }
 
-// evictLocked drops age-expired entries, then trims to maxCount (oldest
-// first) if still over capacity. Caller must hold s.mu.
+// touchLocked records id as just-(re)persisted: moved to the back of order
+// (most-recently-touched) if already tracked, inserted there for the first
+// time otherwise. Caller must hold s.mu.
+func (s *SnapshotStore) touchLocked(id uint64) {
+	if elem, ok := s.elems[id]; ok {
+		s.order.MoveToBack(elem)
+		return
+	}
+	s.elems[id] = s.order.PushBack(id)
+}
+
+// removeLocked drops id from byID and order/elems together, so the three
+// never drift out of lockstep. Caller must hold s.mu.
+func (s *SnapshotStore) removeLocked(id uint64) {
+	delete(s.byID, id)
+	if elem, ok := s.elems[id]; ok {
+		s.order.Remove(elem)
+		delete(s.elems, id)
+	}
+}
+
+// evictLocked drops age-expired entries oldest-touched first, stopping at
+// the first still-fresh one (order's front-to-back order is exactly
+// CapturedAt ascending, see the SnapshotStore.order doc comment — a
+// repeatedly-refreshed id is moved to the back on every touch, so it can
+// never leave a stale, still-expired-looking entry earlier in order),
+// then trims to maxCount (oldest-touched first) if still over capacity.
+// Caller must hold s.mu.
 func (s *SnapshotStore) evictLocked(now time.Time) {
 	if s.ttl > 0 {
-		for id, snap := range s.byID {
-			if now.Sub(snap.CapturedAt) > s.ttl {
-				delete(s.byID, id)
+		for {
+			front := s.order.Front()
+			if front == nil {
+				break
 			}
+			id := front.Value.(uint64)
+			snap, ok := s.byID[id]
+			if !ok {
+				// byID/order/elems are always kept in lockstep by
+				// touchLocked/removeLocked; this is defense in depth
+				// against that invariant, not an expected path.
+				s.order.Remove(front)
+				delete(s.elems, id)
+				continue
+			}
+			if now.Sub(snap.CapturedAt) <= s.ttl {
+				break
+			}
+			s.removeLocked(id)
 		}
 	}
-	if s.maxCount > 0 {
-		for len(s.byID) > s.maxCount && len(s.touched) > 0 {
-			oldest := s.touched[0]
-			s.touched = s.touched[1:]
-			delete(s.byID, oldest)
+	for s.maxCount > 0 && len(s.byID) > s.maxCount {
+		front := s.order.Front()
+		if front == nil {
+			break
 		}
-	}
-	// Bound the touched slice itself so a store that's never at capacity
-	// doesn't still grow this bookkeeping slice forever.
-	if len(s.touched) > 4*max(s.maxCount, 1) {
-		s.touched = append([]uint64(nil), s.touched[len(s.touched)-max(s.maxCount, 1):]...)
+		s.removeLocked(front.Value.(uint64))
 	}
 }

@@ -560,7 +560,7 @@ func (e *Engine) evaluateMergedTrust(res *recover.Result, view *ViewState) {
 		res.MergedTrust = recover.MergedTrustNA
 		return
 	}
-	n := len(view.Dict.ActiveIDs())
+	n := view.Dict.Len()
 	_, trust := policy.evaluate(res.RawSupport, n, res.Coverage)
 	res.MergedTrust = trust
 	e.metrics.IncMergedWindows(trust)

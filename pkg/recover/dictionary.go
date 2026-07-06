@@ -100,6 +100,12 @@ func (dict *Dictionary) Coverage(emittersExpected int) (present, total int) {
 	return len(dict.presentEmitters), emittersExpected
 }
 
+// Len returns the number of currently active (non-tombstoned) series,
+// without the allocation + sort ActiveIDs pays for the ordered ID slice —
+// use this when only the count is needed (e.g. ADR-015's merged-trust
+// guardrail, evaluated against N but never the IDs themselves).
+func (dict *Dictionary) Len() int { return len(dict.active) }
+
 // ActiveIDs returns the currently active (non-tombstoned) series IDs,
 // sorted ascending. This is the row order BuildCSR uses, and the order
 // Recover uses to correlate a recovered candidate index back to a series

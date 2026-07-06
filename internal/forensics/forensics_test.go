@@ -124,6 +124,51 @@ func TestSelectAndPersist_NoMatchesReturnsNil(t *testing.T) {
 	}
 }
 
+// TestSnapshotStore_TTLEvictionIgnoresRefreshOrder is a regression test for
+// a naive "stop scanning insertion order at the first non-expired entry"
+// TTL sweep: with a plain append-only touch log (no dedup), a repeatedly
+// refreshed id leaves a stale, old-looking entry near the front, which
+// would make such a scan stop early and skip a genuinely-expired id
+// sitting behind it. SnapshotStore's order/elems (LRU list, one entry per
+// id, moved to the back on every touch) must not have this bug: refreshing
+// id 1 after id 2 was persisted must not shield id 2 from TTL eviction.
+func TestSnapshotStore_TTLEvictionIgnoresRefreshOrder(t *testing.T) {
+	const ttl = 90 * time.Second
+	s := NewSnapshotStore(ttl, 0)
+	start := time.Unix(1000, 0)
+
+	blob1 := encodeBlob(t, []wire.SnapshotEntry{{ID: 1, TSMs: 0, Value: 1}}, wire.CodecGzip)
+	blob2 := encodeBlob(t, []wire.SnapshotEntry{{ID: 2, TSMs: 0, Value: 2}}, wire.CodecGzip)
+
+	if _, err := s.SelectAndPersist([]uint64{1}, blob1, wire.CodecGzip, start); err != nil {
+		t.Fatalf("SelectAndPersist(1): %v", err)
+	}
+	if _, err := s.SelectAndPersist([]uint64{2}, blob2, wire.CodecGzip, start.Add(1*time.Second)); err != nil {
+		t.Fatalf("SelectAndPersist(2): %v", err)
+	}
+	// Refresh id 1 well after id 2 was first (and only) persisted: id 1's
+	// insertion-order entry is now stale even though its current state is
+	// fresh, while id 2 was never touched again.
+	if _, err := s.SelectAndPersist([]uint64{1}, blob1, wire.CodecGzip, start.Add(50*time.Second)); err != nil {
+		t.Fatalf("SelectAndPersist(1 refresh): %v", err)
+	}
+
+	// At start+101s: id 1's age is 101-50=51s (<=90s ttl, fresh); id 2's
+	// age is 101-1=100s (>90s ttl, expired). A scan that stops at id 1's
+	// stale original position would wrongly leave id 2 in the store.
+	now := start.Add(101 * time.Second)
+	removed := s.Prune(now)
+	if removed != 1 {
+		t.Fatalf("Prune removed %d, want 1 (only id 2)", removed)
+	}
+	if _, ok := s.Get(1, now); !ok {
+		t.Fatalf("Get(1): not found, want present (refreshed at start+50s, still within ttl)")
+	}
+	if _, ok := s.Get(2, now); ok {
+		t.Fatalf("Get(2): found, want evicted (untouched since start+1s, past ttl)")
+	}
+}
+
 func TestSelectAndPersist_UnregisteredCodec(t *testing.T) {
 	s := NewSnapshotStore(time.Hour, 10)
 	blob := encodeBlob(t, []wire.SnapshotEntry{{ID: 1, TSMs: 0, Value: 1}}, wire.CodecGzip)
