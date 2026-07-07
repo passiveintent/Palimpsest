@@ -7,6 +7,20 @@
 
 package wire
 
+// DictBlockRawBytes returns the number of uncompressed bytes the dict_delta
+// entries in dds would occupy on the wire: the same quantity EncodedSize
+// counts toward a frame's total. Provided as a standalone helper for
+// shadow-mode instrumentation (ADR-017 pilot week) and the P16 gate's
+// compression-measurement variant, so callers can compare CompressDictBlock
+// output against the baseline without re-counting the entire frame.
+func DictBlockRawBytes(dds []DictDelta) int {
+	n := 0
+	for _, dd := range dds {
+		n += 8 + 1 + 4 + 2 + len(dd.Name) // id, flags, init_value, name_len, name
+	}
+	return n
+}
+
 // EncodedSize returns the exact number of bytes Marshal(f) would produce,
 // computed from field lengths alone: no allocation, no CRC computation, no
 // validation. Byte-accounting metrics that need every frame's wire size

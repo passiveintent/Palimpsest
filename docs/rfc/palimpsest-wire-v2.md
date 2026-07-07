@@ -480,3 +480,97 @@ wire-format change, only an encoder-side fix in the three call sites
 above). A Merkle resync channel (§10.1) would also detect and repair this
 class of divergence automatically, independent of whether the underlying
 bug is fixed.
+
+*Update:* this defect has since been fixed; see §11 (Errata).
+
+### 10.3 Reconcile-by-ID-list: the one-way-transport-compatible alternative
+
+Before committing to the full Merkle root + bidirectional resync channel
+(§10.1), any v3 design must beat the simpler rung that §10.1's P16 gate
+quietly enables: **reconcile-by-ID-list**.
+
+**What it is.** A golden keyframe already ships every active ID. Rather
+than carrying names (15 + name_len bytes per entry at current synthetic-name
+scale; see `docs/PERF.md` Condition 1), it could carry *only* the sorted
+`u64` ID set. Sorted `u64`s delta-code to ~2-3 bytes per entry (the typical
+inter-entry gap for a 300-series fleet is a small fraction of the u64 range,
+compressing well). The decoder runs the same name-list hash as today but
+against the ID-only list — no names on the wire at golden cadence, full
+names shipped only on birth or at a low, configurable cadence. This is
+O(N·3B) for an N-series dictionary versus Merkle's O(1) hash compare, but
+O(N·3B) << O(N·55B) (the current full-name cost), and unlike bidirectional
+resync it works on one-way transports.
+
+**Transport dependency.** ADR-012's zero-inbound-sockets rule and the S3
+drop-path variant of the demo's file-sink mode make one-way-transport support
+non-negotiable for a chunk of deployments:
+
+| Transport | Bidirectional resync (§10.1) | Reconcile-by-ID-list |
+| --- | --- | --- |
+| Kafka consumer group | ✓ (request/respond feasible) | ✓ |
+| HTTP push (httpsrc) | ✓ (response channel available) | ✓ |
+| S3 / file drop | ✗ (no inbound channel by design) | ✓ |
+| OTel Collector pipeline | ✗ (processor has no back-channel) | ✓ |
+
+Bidirectional resync requires a transport-level back-channel — responses to
+"which subtrees differ?" — that is simply absent on S3 and OTel pipelines.
+Reconcile-by-ID-list delivers O(N·3B) dictionary verification on every
+transport.
+
+**What numbers make Merkle win.** Merkle beats reconcile-by-ID-list only if
+*all three* conditions hold simultaneously on real production traffic:
+
+1. The O(1) hash-compare savings outweigh the additional engineering cost
+   (implementation, testing, ops complexity of a bidirectional resync
+   protocol).
+2. The deployment is transport-compatible (bidirectional resync is
+   available — S3/OTel paths excluded; see table above).
+3. The compressed ID-list approach (O(N·3B)) does not already fit within a
+   reasonable byte budget. At N=1000 active series, a golden frame carries
+   ~3 KB of sorted-u64 data — less than 1% of even the synthetic-name wire
+   budget at churn=10/min.
+
+Shadow-mode instrumentation (`palimpsest_dict_block_raw_bpe` /
+`palimpsest_dict_block_gzip_bpe` Prometheus gauges from pilot-week
+deployments; see `docs/PERF.md` "Shadow-mode metrics") will produce
+real-name bytes-per-entry numbers to evaluate condition 3 against actual
+production name lengths without a separate measurement exercise.
+
+**Decision deferred.** No v3 protocol change is defined here. This section
+records the cheaper alternative Merkle must beat, and the conditions under
+which it would win. The pilot-week shadow metrics resolve condition 3;
+ADR-017's backlog item stays open pending those numbers.
+
+## 11. Errata
+
+### 11.1 Golden keyframes silently dropping same-window tombstones (fixed)
+
+The defect described in §10.2 has been fixed as of this errata. The fix is
+v2-compatible: no wire bytes changed, and mixed birth/tombstone `dict_delta`
+lists were already legal in any frame type under the v2 wire format (§4.3).
+
+**Encoder-side fix.** `pkg/wire.BuildKeyframe`'s golden path now carries
+`FullDict()`'s adds ++ that same flush window's `Tracker.Expire()` tombstones,
+not `FullDict()` alone. All three encoder implementations
+(`cmd/plsim/encoder.go`, `otel/processor/csresidual/processor.go`, and
+`internal/core`'s test-harness encoder in `testencoder_test.go`) now delegate
+to this shared builder; the duplicated local helpers that each implemented
+the old pattern have been removed.
+
+**Decoder-side defense in depth.** `internal/core/engine.go`'s
+`reconcileGoldenDict` treats a golden (non-KDELTA) keyframe as authoritative
+for the receiving emitter's per-view dictionary mirror: any series ID present
+in the emitter's mirror but absent from the golden frame's declared active set
+is released via `view.releaseOwner`, triggering the same ownership-aware
+eviction chain as an explicit tombstone `dict_delta`. See
+`docs/adr/ADR-008-ephemeral-cardinality.md`'s "Amendment: golden
+reconciliation and union-dictionary ownership" for the decision record.
+This runs before `VerifyKeyframe`; the dict-root check is therefore a
+post-condition of reconciliation for golden frames. KDELTA frames are
+unchanged.
+
+**Verification.** `internal/core.TestDictRootEvidenceGateMeasurement` (the
+ADR-017 evidence-gate measurement) now passes with `dict_root_mismatches=0`
+and `degraded_at_end=false` at all three tested churn rates (10, 60, and
+300 events/min) under lossless delivery. See `docs/PERF.md`'s "Discovered
+defect (now fixed)" section for updated measurements.

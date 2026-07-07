@@ -110,6 +110,32 @@ func DecompressPayload(codec Codec, compressed []byte, maxBytes int) ([]byte, er
 	return out, nil
 }
 
+// CompressDictBlock serializes dds to the same byte layout Marshal uses for
+// the dict_delta section (see codec.go), then routes the result through the
+// Compressor registered for codec. Returns the compressed bytes; callers
+// use len(result) for shadow-mode byte-count metrics (ADR-017 pilot week)
+// and the P16 gate's dict-block-compression measurement variant.
+//
+// For CodecNone the output is the raw serialized form (identity; no
+// compression). Returns ErrUnregisteredCodec if codec has no registered
+// Compressor. The dict_delta wire layout (id u64 + flags u8 + init_value
+// f32 + name_len u16 + name bytes) is reproduced here rather than calling
+// back into codec.go so pkg/wire avoids a circular dependency on its own
+// mutable codec path. This function does not modify any on-wire bytes.
+func CompressDictBlock(codec Codec, dds []DictDelta) ([]byte, error) {
+	// 52 bytes/entry is a reasonable estimate for plsim-scale names (~37
+	// chars); either under- or over-estimating just triggers a single resize.
+	raw := make([]byte, 0, len(dds)*52)
+	for _, dd := range dds {
+		raw = appendU64(raw, dd.ID)
+		raw = appendU8(raw, dd.Flags)
+		raw = appendF32(raw, dd.InitValue)
+		raw = appendU16(raw, uint16(len(dd.Name)))
+		raw = append(raw, dd.Name...)
+	}
+	return CompressPayload(codec, raw)
+}
+
 // noneCompressor implements CodecNone: an identity pass-through.
 type noneCompressor struct{}
 

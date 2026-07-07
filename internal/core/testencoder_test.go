@@ -8,19 +8,12 @@
 package core
 
 import (
-	"math"
 	"time"
 
 	"github.com/passiveintent/Palimpsest/pkg/predict"
 	"github.com/passiveintent/Palimpsest/pkg/sketch"
 	"github.com/passiveintent/Palimpsest/pkg/wire"
 )
-
-// minTestQuantScale mirrors otel/processor/csresidual's minQuantScale: it
-// floors adaptive quantization scales so an all-zero (perfectly quiet)
-// window never produces an invalid (zero) wire.Quantize/EncodeKeyframe
-// scale.
-const minTestQuantScale = 1e-6
 
 // testEncoder is a minimal, self-contained mirror of the encode-path
 // pipeline (pkg/sketch.Tracker + Accumulator + pkg/predict.Hold +
@@ -109,42 +102,46 @@ func (e *testEncoder) flush(now time.Time, seq uint32, values map[string]float64
 
 		ids := e.tracker.ActiveIDs()
 		values64 := e.tracker.CurrentValues()
-		values32 := make(map[uint64]float32, len(values64))
-		for id, v := range values64 {
-			values32[id] = float32(v)
-		}
-		scale := kdeltaScale(values32, e.prevKeyframeValues)
-		payload, flags, err := wire.EncodeKeyframe(ids, values32, e.prevKeyframeValues, golden, scale)
+
+		res, err := wire.BuildKeyframe(wire.KeyframeBuildInput{
+			Golden:             golden,
+			IDs:                ids,
+			Values:             values64,
+			PrevKeyframeValues: e.prevKeyframeValues,
+			DictDeltas:         dictDeltas,
+			FullDict:           e.tracker.FullDict(),
+			Tombstones:         tombstones,
+		})
 		if err != nil {
 			panic(err)
 		}
 		f.FrameType = wire.FrameTypeKeyframe
-		f.Flags |= flags
-		f.Payload = payload
-		f.QuantScale = scale
-		f.DictRoot = wire.ComputeDictRoot(ids)
-		if golden {
-			f.DictDeltas = e.tracker.FullDict()
-		} else {
-			f.DictDeltas = dictDeltas
-		}
-		e.prevKeyframeValues = values32
+		f.Flags |= res.Flags
+		f.Payload = res.Payload
+		f.QuantScale = res.QuantScale
+		f.DictRoot = res.DictRoot
+		f.DictDeltas = res.DictDeltas
+		e.prevKeyframeValues = res.Values32
 		// ADR-003: a keyframe is the only steady-state point the open-loop
 		// predictor baseline is allowed to move. Refresh it to the true
 		// current value here, or residuals accumulate unbounded from birth
 		// forever instead of resetting each keyframe.
 		e.pred.LoadKeyframe(values64)
 	} else {
-		scale := residualScale(y, e.bits)
-		payload, err := wire.Quantize(y, uint8(e.bits), scale)
+		res, err := wire.BuildResidual(wire.ResidualBuildInput{
+			Y:          y,
+			Bits:       uint8(e.bits),
+			DictDeltas: dictDeltas,
+			IDs:        e.tracker.ActiveIDs(),
+		})
 		if err != nil {
 			panic(err)
 		}
 		f.FrameType = wire.FrameTypeResidual
-		f.Payload = payload
-		f.QuantScale = scale
-		f.DictDeltas = dictDeltas
-		f.DictRoot = wire.ComputeDictRoot(e.tracker.ActiveIDs())
+		f.Payload = res.Payload
+		f.QuantScale = res.QuantScale
+		f.DictDeltas = res.DictDeltas
+		f.DictRoot = res.DictRoot
 	}
 
 	e.tracker.ResetWindow()
@@ -177,42 +174,3 @@ func (e *testEncoder) rotateEpoch(now time.Time, newEpoch uint64) {
 	e.keyframeCount = 0
 }
 
-// residualScale mirrors otel/processor/csresidual's adaptiveScale: the
-// smallest RESIDUAL quantization scale that keeps the window's
-// largest-magnitude sketch value from clamping.
-func residualScale(y []float64, bits int) float32 {
-	var maxAbs float64
-	for _, v := range y {
-		if a := math.Abs(v); a > maxAbs {
-			maxAbs = a
-		}
-	}
-	limit := 127.0
-	if bits == 16 {
-		limit = 32767.0
-	}
-	return scaleFor(maxAbs, limit)
-}
-
-// kdeltaScale mirrors otel/processor/csresidual's adaptiveKDeltaScale.
-func kdeltaScale(cur, prev map[uint64]float32) float32 {
-	var maxAbs float64
-	for id, v := range cur {
-		d := math.Abs(float64(v - prev[id]))
-		if d > maxAbs {
-			maxAbs = d
-		}
-	}
-	return scaleFor(maxAbs, 32767.0)
-}
-
-func scaleFor(maxAbs, steps float64) float32 {
-	if maxAbs <= 0 {
-		return minTestQuantScale
-	}
-	s := float32(maxAbs / steps)
-	if s <= 0 {
-		return minTestQuantScale
-	}
-	return s
-}

@@ -38,11 +38,6 @@ import (
 // without needing another knob.
 const stormHistoryWindow = 30
 
-// minQuantScale floors adaptive quantization scales so an all-zero (or
-// all-identical) window never produces an invalid (zero) wire.Quantize /
-// wire.EncodeKeyframe scale.
-const minQuantScale = 1e-6
-
 // pipelineKey identifies one independent (shard, view) encode pipeline:
 // sketches never mix across shards (ADR-002/ADR-012 seed derivation keys
 // on shard_id) or across views (ADR-010 declared sketch-cube views).
@@ -626,12 +621,11 @@ func (p *metricsProcessor) flushPipeline(pl *pipeline, now time.Time) {
 	keyframeWindow := pl.seq%uint32(p.cfg.KeyframeEvery) == 0
 	switch {
 	case forceGolden || keyframeWindow:
-		p.buildKeyframe(pl, &f, forceGolden, dictDeltas)
+		p.buildKeyframe(pl, &f, forceGolden, dictDeltas, tombstones)
 	case pl.storm.Trigger(energy):
 		p.buildFallback(pl, &f, dictDeltas)
 	default:
-		scale := adaptiveScale(y, p.cfg.Bits)
-		p.buildResidual(&f, y, scale, dictDeltas, pl.tracker.ActiveIDs())
+		p.buildResidual(&f, y, dictDeltas, pl.tracker.ActiveIDs())
 	}
 
 	if entries := pl.snap.drain(now); len(entries) > 0 {
@@ -685,38 +679,51 @@ func (p *metricsProcessor) rotateEpoch(pl *pipeline, newEpoch uint64, now time.T
 	pl.degraded = false
 }
 
-func (p *metricsProcessor) buildKeyframe(pl *pipeline, f *wire.Frame, forceGolden bool, dictDeltas []wire.DictDelta) {
+// buildKeyframe builds f as a KEYFRAME frame. tombstones is this same
+// window's Expire() output (a subset of dictDeltas, which also mixes in
+// births): on a golden keyframe, FullDict() alone only lists currently
+// active series, so any series that expired in this exact window must be
+// appended explicitly (ADR-008 amendment) — omission is not the same as an
+// explicit tombstone, and without it a decoder would never learn that
+// series is gone (FullDict simply stops mentioning it, forever).
+func (p *metricsProcessor) buildKeyframe(pl *pipeline, f *wire.Frame, forceGolden bool, dictDeltas, tombstones []wire.DictDelta) {
 	golden := forceGolden || pl.keyframeCount%p.goldenEvery == 0
 	pl.keyframeCount++
 
 	ids := pl.tracker.ActiveIDs()
 	values64 := pl.tracker.CurrentValues()
-	values32 := make(map[uint64]float32, len(values64))
-	for id, v := range values64 {
-		values32[id] = float32(v)
-	}
 
-	scale := adaptiveKDeltaScale(values32, pl.prevKeyframeValues)
-	payload, flags, err := wire.EncodeKeyframe(ids, values32, pl.prevKeyframeValues, golden, scale)
+	res, err := wire.BuildKeyframe(wire.KeyframeBuildInput{
+		Golden:             golden,
+		Codec:              p.codec,
+		IDs:                ids,
+		Values:             values64,
+		PrevKeyframeValues: pl.prevKeyframeValues,
+		DictDeltas:         dictDeltas,
+		FullDict:           pl.tracker.FullDict(),
+		Tombstones:         tombstones,
+	})
 	if err != nil {
-		p.logger.Error("csresidual: EncodeKeyframe", zap.Error(err))
-		payload, flags = nil, 0
-	} else if payload, err = wire.CompressPayload(p.codec, payload); err != nil {
-		// ADR-006 §Addendum: the same codec that governs the snapshot
-		// blob also governs a KEYFRAME's payload end-to-end.
-		p.logger.Error("csresidual: compress keyframe payload", zap.Error(err))
-		payload, flags = nil, 0
+		// ADR-006 §Addendum: the same codec that governs the snapshot blob
+		// also governs a KEYFRAME's payload end-to-end; either EncodeKeyframe
+		// or CompressPayload failing lands here.
+		p.logger.Error("csresidual: BuildKeyframe", zap.Error(err))
+		res = wire.KeyframeBuildResult{DictRoot: wire.ComputeDictRoot(ids)}
 	}
 
 	f.FrameType = wire.FrameTypeKeyframe
-	f.Flags |= flags
-	f.Payload = payload
-	f.QuantScale = scale
-	f.DictRoot = wire.ComputeDictRoot(ids)
+	f.Flags |= res.Flags
+	f.Payload = res.Payload
+	f.QuantScale = res.QuantScale
+	f.DictRoot = res.DictRoot
 	if golden {
-		f.DictDeltas = pl.tracker.FullDict()
+		f.DictDeltas = append(pl.tracker.FullDict(), tombstones...)
 	} else {
 		f.DictDeltas = dictDeltas
+	}
+	values32 := make(map[uint64]float32, len(values64))
+	for id, v := range values64 {
+		values32[id] = float32(v)
 	}
 	pl.prevKeyframeValues = values32
 	// ADR-003: a keyframe is the only steady-state point the open-loop
@@ -761,62 +768,20 @@ func (p *metricsProcessor) buildFallback(pl *pipeline, f *wire.Frame, dictDeltas
 	f.DictRoot = wire.ComputeDictRoot(pl.tracker.ActiveIDs())
 }
 
-func (p *metricsProcessor) buildResidual(f *wire.Frame, y []float64, scale float32, dictDeltas []wire.DictDelta, ids []uint64) {
-	payload, err := wire.Quantize(y, f.Bits, scale)
+func (p *metricsProcessor) buildResidual(f *wire.Frame, y []float64, dictDeltas []wire.DictDelta, ids []uint64) {
+	res, err := wire.BuildResidual(wire.ResidualBuildInput{
+		Y:          y,
+		Bits:       f.Bits,
+		DictDeltas: dictDeltas,
+		IDs:        ids,
+	})
 	if err != nil {
-		p.logger.Error("csresidual: Quantize", zap.Error(err))
-		payload = nil
+		p.logger.Error("csresidual: BuildResidual", zap.Error(err))
+		res = wire.ResidualBuildResult{DictRoot: wire.ComputeDictRoot(ids), DictDeltas: dictDeltas}
 	}
 	f.FrameType = wire.FrameTypeResidual
-	f.Payload = payload
-	f.QuantScale = scale
-	f.DictDeltas = dictDeltas
-	f.DictRoot = wire.ComputeDictRoot(ids)
-}
-
-// adaptiveScale picks the smallest RESIDUAL quantization scale (per-frame
-// QuantScale, docs/SPEC.md) that keeps the window's largest-magnitude
-// sketch value from clamping against Quantize's int8/int16 range: scale =
-// max|y| / representable-limit, floored at minQuantScale so an all-zero
-// window still yields a valid (finite, positive) scale.
-func adaptiveScale(y []float64, bits int) float32 {
-	var maxAbs float64
-	for _, v := range y {
-		if a := math.Abs(v); a > maxAbs {
-			maxAbs = a
-		}
-	}
-	limit := 127.0
-	if bits == 16 {
-		limit = 32767.0
-	}
-	return scaleFor(maxAbs, limit)
-}
-
-// adaptiveKDeltaScale picks a KEYFRAME KDELTA quantization scale (ADR-011)
-// from the largest per-ID value change versus the prior keyframe (0 for a
-// birth, matching EncodeKeyframe's own delta-from-zero treatment). Unlike
-// RESIDUAL, KDELTA deltas are zigzag-varint packed rather than clamped to
-// a fixed bit width, so there is no hard representable-range ceiling; a
-// 16-bit-equivalent precision target is a reasonable default.
-func adaptiveKDeltaScale(cur, prev map[uint64]float32) float32 {
-	var maxAbs float64
-	for id, v := range cur {
-		d := math.Abs(float64(v - prev[id]))
-		if d > maxAbs {
-			maxAbs = d
-		}
-	}
-	return scaleFor(maxAbs, 32767.0)
-}
-
-func scaleFor(maxAbs, steps float64) float32 {
-	if maxAbs <= 0 {
-		return minQuantScale
-	}
-	s := float32(maxAbs / steps)
-	if s <= 0 {
-		return minQuantScale
-	}
-	return s
+	f.Payload = res.Payload
+	f.QuantScale = res.QuantScale
+	f.DictDeltas = res.DictDeltas
+	f.DictRoot = res.DictRoot
 }

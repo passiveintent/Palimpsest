@@ -125,40 +125,53 @@ func runByteFractionScenario(t *testing.T, churnPerMin float64) {
 
 	total := met.WireBytesTotal(evidenceShardID)
 	full := met.FullDictKeyframeBytes(evidenceShardID)
+	dictRaw := met.DictBlockRawBytes(evidenceShardID)
+	dictGzip := met.DictBlockGzipBytes(evidenceShardID)
 
 	var pct float64
 	if total > 0 {
 		pct = 100 * float64(full) / float64(total)
 	}
+	var gzipPct float64
+	if total > 0 && dictGzip > 0 {
+		// Replace the raw dict block bytes with compressed in the full-dict numerator:
+		// full_compressed = full - dictRaw + dictGzip
+		fullCompressed := full - dictRaw + dictGzip
+		gzipPct = 100 * float64(fullCompressed) / float64(total)
+	}
 
-	t.Logf("churn=%v/min windows=%d interval=%s logical_series=%d->%d(end) total_wire_bytes=%d full_dict_keyframe_bytes=%d (%.3f%%) dict_root_mismatches=%d degraded_at_end=%v",
-		churnPerMin, evidenceWindows, evidenceInterval, evidenceLogicalSeries, nextIdx, total, full, pct, met.DictRootMismatches(evidenceShardID), eng.ShardDegraded(evidenceShardID))
+	t.Logf("churn=%v/min windows=%d interval=%s logical_series=%d->%d(end) total_wire_bytes=%d full_dict_keyframe_bytes=%d (%.3f%%) dict_block_raw=%d dict_block_gzip=%d full_dict_gzip_pct=%.3f%% dict_root_mismatches=%d degraded_at_end=%v",
+		churnPerMin, evidenceWindows, evidenceInterval, evidenceLogicalSeries, nextIdx, total, full, pct, dictRaw, dictGzip, gzipPct, met.DictRootMismatches(evidenceShardID), eng.ShardDegraded(evidenceShardID))
 
 	if total == 0 {
 		t.Fatalf("total_wire_bytes = 0, scenario produced no frames")
 	}
-	// This scenario is lossless (no dropped frames), so a naive expectation
-	// would be dict_root_mismatches == 0 and degraded_at_end == false. In
-	// practice, at realistic churn rates over an hour, a tombstone reliably
-	// happens to expire in the very same window as a golden keyframe at
-	// least once -- and that tombstone is silently dropped from the wire
-	// (the "Discovered defect" in docs/adr/ADR-017-merkle-decision.md):
-	// cmd/plsim/encoder.go, otel/processor/csresidual/processor.go, and this
-	// package's testEncoder all replace that window's dict_delta list with
-	// tracker.FullDict() wholesale on a golden keyframe, discarding that
-	// same call's Expire() tombstones. Unlike a dropped birth (which the
-	// *next* golden's full-dict resync repairs, see
-	// TestDictRootHealTimeMeasurement), a lost tombstone leaves a stale ID
-	// in the decoder's dictionary that the encoder never re-announces --
-	// nothing ever removes it, so the view stays degraded for the rest of
-	// the run. This assertion pins that known, out-of-scope behavior rather
-	// than hiding it; it is not this test's job to fix it (GUARDRAILS: no
-	// protocol changes; discovered defects become a v3 proposal appendix).
-	if got := met.DictRootMismatches(evidenceShardID); got > 1 {
-		t.Fatalf("dict_root_mismatches = %d, want 0 or 1 (see the Discovered defect note above)", got)
+	// This scenario is lossless (no dropped frames): dict_root_mismatches
+	// must be exactly 0 and the view must never be left DEGRADED.
+	//
+	// This was NOT always true here. Running this exact scenario originally
+	// surfaced a real bug (docs/adr/ADR-017-merkle-decision.md's
+	// "Discovered defect", docs/rfc/palimpsest-wire-v2.md §10.2): at
+	// realistic churn rates over an hour, a tombstone reliably expires in
+	// the very same window as a golden keyframe at least once, and
+	// cmd/plsim/encoder.go, otel/processor/csresidual/processor.go, and
+	// this package's testEncoder all replaced that window's dict_delta list
+	// with tracker.FullDict() wholesale on a golden keyframe, silently
+	// discarding that same call's Expire() tombstones. That is now fixed
+	// (v2-compatible, no wire-format change): a golden keyframe carries
+	// FullDict()'s adds ++ that window's own tombstones
+	// (pkg/wire.BuildKeyframe), and as defense in depth against any other
+	// cause of drift, a golden keyframe's DictDeltas are also
+	// authoritative-replace for the decoder's per-emitter dictionary mirror
+	// (internal/core/engine.go's reconcileGoldenDict) -- see
+	// docs/adr/ADR-008-ephemeral-cardinality.md's "Amendment: golden
+	// reconciliation and union-dictionary ownership" and the RFC's Errata
+	// entry (§11).
+	if got := met.DictRootMismatches(evidenceShardID); got != 0 {
+		t.Fatalf("dict_root_mismatches = %d, want 0 (lossless delivery; see the fix note above)", got)
 	}
-	if !eng.ShardDegraded(evidenceShardID) {
-		t.Logf("note: shard healed by end of run (the golden/tombstone collision did not occur this run, or a later event happened to repair it)")
+	if eng.ShardDegraded(evidenceShardID) {
+		t.Fatalf("shard left DEGRADED at end of a lossless run")
 	}
 }
 
@@ -174,15 +187,11 @@ func runByteFractionScenario(t *testing.T, churnPerMin float64) {
 // seriesTTL here is set longer than the observation window so no series
 // tombstones during the run: this isolates the mechanism's designed
 // behavior (a birth missed once, healed by the next golden's full-dict
-// resync) from a separate, already-discovered defect (see
-// docs/adr/ADR-017-merkle-decision.md's "Discovered defect" section): a
-// tombstone whose TTL expires in the *same* window as a golden keyframe is
-// silently dropped from the wire (cmd/plsim/encoder.go, otel/processor/
-// csresidual/processor.go, and this package's testEncoder all replace
-// dictDeltas with tracker.FullDict() wholesale on a golden window, discarding
-// that window's own Expire() tombstones), which can make a divergence
-// permanent rather than bounded. That defect is out of scope for this RFC
-// prompt (no protocol changes) and is not what this test measures.
+// resync) from the separate same-window tombstone/golden collision case
+// (docs/adr/ADR-017-merkle-decision.md's "Discovered defect", now fixed --
+// see runByteFractionScenario above and
+// TestE2E_DroppedTombstoneHealsAtNextGolden in ownership_test.go), which
+// this test doesn't need to exercise.
 func TestDictRootHealTimeMeasurement(t *testing.T) {
 	const (
 		shardID       = uint64(9002)

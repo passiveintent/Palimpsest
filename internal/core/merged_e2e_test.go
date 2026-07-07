@@ -88,7 +88,7 @@ func mergedTrueShifts(s mergedNames) map[string]float64 {
 // series). Mirrors e2e_test.go's TestE2E_DegradedHealsOnGoldenKeyframe
 // ghost-frame construction.
 func buildResidualFrame(shardID, emitterID uint64, viewID uint16, seq uint32, m, d, bits int, y []float64) *wire.Frame {
-	scale := residualScale(y, bits)
+	scale := wire.AdaptiveScale(y, bits)
 	payload, err := wire.Quantize(y, uint8(bits), scale)
 	if err != nil {
 		panic(err)

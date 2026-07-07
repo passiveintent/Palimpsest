@@ -89,6 +89,7 @@ type Metrics struct {
 	degradedShards    int64
 	tombstonesApplied int64
 	birthsApplied     int64
+	emittersReaped    int64 // ADR-008 amendment: roster-liveness reaps, distinct from explicit tombstones
 
 	anomaliesFired *labeled // key: substrate|confidence
 
@@ -123,6 +124,17 @@ type Metrics struct {
 	dictRootHealCount   *labeled // key: shard -> count, for average
 	dictRootHealMaxNs   *labeled // key: shard -> worst observed heal duration (ns)
 
+	// dictBlockShadow* back the pilot-week shadow-mode dict-block compression
+	// measurement (ADR-017): for every golden (Full, non-KDELTA) keyframe, the
+	// dict_delta block's raw and gzip-compressed byte counts and entry count
+	// are accumulated here so a real deployment can gauge how much a
+	// production dictionary block (with real, longer names) would compress,
+	// settling the Merkle-vs-reconcile-by-ID-list decision without a separate
+	// measurement exercise (docs/rfc/palimpsest-wire-v2.md §10.3).
+	dictBlockRawBytes  *labeled // key: shard -> cumulative raw dict bytes
+	dictBlockGzipBytes *labeled // key: shard -> cumulative gzip dict bytes
+	dictBlockEntries   *labeled // key: shard -> cumulative entry count
+
 	scalarMu    sync.Mutex // guards the plain int64 scalar fields above
 	publishOnce sync.Once
 }
@@ -143,6 +155,9 @@ func New() *Metrics {
 		dictRootHealSeconds:     newLabeled(),
 		dictRootHealCount:       newLabeled(),
 		dictRootHealMaxNs:       newLabeled(),
+		dictBlockRawBytes:       newLabeled(),
+		dictBlockGzipBytes:      newLabeled(),
+		dictBlockEntries:        newLabeled(),
 	}
 }
 
@@ -208,11 +223,30 @@ func (m *Metrics) DegradedShards() int64 {
 	return m.getInt64(&m.degradedShards)
 }
 
+// IncTombstonesApplied records n series actually leaving a shard's shared
+// (view-level) dictionary: since the ADR-008 amendment ("Ownership &
+// Eviction"), a tombstone dict_delta only releases the reporting emitter's
+// own claim on a series — this only increments once that series' last
+// claim is released (an explicit tombstone from its final owner, or a
+// roster-liveness reap of a silently-dead one), not on every individual
+// emitter's tombstone for a series other emitters still claim.
 func (m *Metrics) IncTombstonesApplied(n int) { m.addInt64(&m.tombstonesApplied, int64(n)) }
 func (m *Metrics) TombstonesApplied() int64   { return m.getInt64(&m.tombstonesApplied) }
 
 func (m *Metrics) IncBirthsApplied(n int) { m.addInt64(&m.birthsApplied, int64(n)) }
 func (m *Metrics) BirthsApplied() int64   { return m.getInt64(&m.birthsApplied) }
+
+// IncEmittersReaped records one emitter whose series-ownership claims were
+// released by the roster-liveness sweep (ADR-008 amendment) after going
+// silent for Config.EmitterRosterTTL, as opposed to releasing them via an
+// explicit tombstone. A nonzero rate here is a signal worth alerting on
+// distinctly from routine tombstone churn: it means emitters are going
+// dark without a clean shutdown (crash, permanent network partition)
+// rather than tombstoning their series on the way out.
+func (m *Metrics) IncEmittersReaped() { m.addInt64(&m.emittersReaped, 1) }
+func (m *Metrics) EmittersReaped() int64 {
+	return m.getInt64(&m.emittersReaped)
+}
 
 // IncAnomaliesFired records one AnomalyEvent emitted for (substrate,
 // confidence).
@@ -352,6 +386,29 @@ func (m *Metrics) DictRootHealSecondsMax(shardID uint64) time.Duration {
 	return time.Duration(m.dictRootHealMaxNs.get(shardKey(shardID)))
 }
 
+// AddDictBlockShadow records one golden keyframe's dict_delta block raw byte
+// count, gzip-compressed byte count, and entry count for shardID. Called by
+// internal/core/engine.go's HandleFrame for every golden (non-KDELTA)
+// KEYFRAME as pilot-week shadow instrumentation for the ADR-017
+// Merkle-vs-reconcile-by-ID-list decision (docs/rfc/palimpsest-wire-v2.md
+// §10.3). CodecGzip is used unconditionally (always-registered, no external
+// dep) so the decoder never needs an external library for this path.
+func (m *Metrics) AddDictBlockShadow(shardID uint64, rawBytes, gzipBytes, entries int64) {
+	key := shardKey(shardID)
+	m.dictBlockRawBytes.add(key, rawBytes)
+	m.dictBlockGzipBytes.add(key, gzipBytes)
+	m.dictBlockEntries.add(key, entries)
+}
+func (m *Metrics) DictBlockRawBytes(shardID uint64) int64 {
+	return m.dictBlockRawBytes.get(shardKey(shardID))
+}
+func (m *Metrics) DictBlockGzipBytes(shardID uint64) int64 {
+	return m.dictBlockGzipBytes.get(shardKey(shardID))
+}
+func (m *Metrics) DictBlockEntries(shardID uint64) int64 {
+	return m.dictBlockEntries.get(shardKey(shardID))
+}
+
 // Publish registers m's counters under expvar at the given top-level name
 // (e.g. "palimpsest"). Safe to call more than once; only the first call
 // takes effect, matching expvar.Publish's "panics if name already
@@ -373,6 +430,7 @@ func (m *Metrics) Snapshot() map[string]any {
 		"degraded_shards":          m.DegradedShards(),
 		"tombstones_applied":       m.TombstonesApplied(),
 		"births_applied":           m.BirthsApplied(),
+		"emitters_reaped":          m.EmittersReaped(),
 		"anomalies_fired":          m.anomaliesFired.snapshot(),
 		"snapshots_captured":       m.SnapshotsCaptured(),
 		"snapshots_latency_avg_ns": int64(m.SnapshotsLatencySecondsAvg()),
@@ -388,6 +446,9 @@ func (m *Metrics) Snapshot() map[string]any {
 		"dict_root_mismatches":     m.dictRootMismatches.snapshot(),
 		"dict_root_heal_avg_ns":    m.avgMapNs(m.dictRootHealSeconds, m.dictRootHealCount),
 		"dict_root_heal_max_ns":    m.dictRootHealMaxNs.snapshot(),
+		"dict_block_raw_bytes":     m.dictBlockRawBytes.snapshot(),
+		"dict_block_gzip_bytes":    m.dictBlockGzipBytes.snapshot(),
+		"dict_block_entries":       m.dictBlockEntries.snapshot(),
 	}
 }
 

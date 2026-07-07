@@ -16,12 +16,6 @@ import (
 	"github.com/passiveintent/Palimpsest/pkg/wire"
 )
 
-// minQuantScale floors adaptive quantization scales so an all-zero (quiet)
-// window never produces an invalid (zero) wire.Quantize/EncodeKeyframe
-// scale, mirroring otel/processor/csresidual's and
-// internal/core/testencoder_test.go's identical constant.
-const minQuantScale = 1e-6
-
 // pipelineConfig configures one encoder pipeline's static parameters.
 type pipelineConfig struct {
 	TenantKey []byte
@@ -135,18 +129,22 @@ func (p *pipeline) flush(now time.Time, seq uint32, values map[string]float64) *
 
 	keyframeWindow := p.cfg.KeyframeEvery > 0 && seq%uint32(p.cfg.KeyframeEvery) == 0
 	if keyframeWindow {
-		p.buildKeyframe(f, dictDeltas)
+		p.buildKeyframe(f, dictDeltas, tombstones)
 	} else {
-		scale := adaptiveScale(y, p.cfg.Bits)
-		payload, err := wire.Quantize(y, uint8(p.cfg.Bits), scale)
+		res, err := wire.BuildResidual(wire.ResidualBuildInput{
+			Y:          y,
+			Bits:       uint8(p.cfg.Bits),
+			DictDeltas: dictDeltas,
+			IDs:        p.tracker.ActiveIDs(),
+		})
 		if err != nil {
 			panic(err)
 		}
 		f.FrameType = wire.FrameTypeResidual
-		f.Payload = payload
-		f.QuantScale = scale
-		f.DictDeltas = dictDeltas
-		f.DictRoot = wire.ComputeDictRoot(p.tracker.ActiveIDs())
+		f.Payload = res.Payload
+		f.QuantScale = res.QuantScale
+		f.DictDeltas = res.DictDeltas
+		f.DictRoot = res.DictRoot
 	}
 
 	if p.cfg.SnapshotThreshold > 0 && haveCandidate && maxAbsResidual > p.cfg.SnapshotThreshold {
@@ -171,77 +169,44 @@ func (p *pipeline) flush(now time.Time, seq uint32, values map[string]float64) *
 	return f
 }
 
-func (p *pipeline) buildKeyframe(f *wire.Frame, dictDeltas []wire.DictDelta) {
+// buildKeyframe builds f as a KEYFRAME frame. tombstones is this same
+// window's Expire() output (a subset of dictDeltas, which also mixes in
+// births): on a golden keyframe, FullDict() alone only lists currently
+// active series, so any series that expired in this exact window must be
+// appended explicitly (ADR-008 amendment) — omission is not the same as an
+// explicit tombstone, and without it a decoder would never learn that
+// series is gone (FullDict simply stops mentioning it, forever).
+func (p *pipeline) buildKeyframe(f *wire.Frame, dictDeltas, tombstones []wire.DictDelta) {
 	golden := p.cfg.GoldenEvery <= 0 || p.keyframeCount%p.cfg.GoldenEvery == 0
 	p.keyframeCount++
 
 	ids := p.tracker.ActiveIDs()
 	values64 := p.tracker.CurrentValues()
-	values32 := make(map[uint64]float32, len(values64))
-	for id, v := range values64 {
-		values32[id] = float32(v)
-	}
 
-	scale := adaptiveKDeltaScale(values32, p.prevKeyframeValues)
-	payload, flags, err := wire.EncodeKeyframe(ids, values32, p.prevKeyframeValues, golden, scale)
-	if err != nil {
-		panic(err)
-	}
-	payload, err = wire.CompressPayload(p.cfg.Codec, payload)
+	res, err := wire.BuildKeyframe(wire.KeyframeBuildInput{
+		Golden:             golden,
+		Codec:              p.cfg.Codec,
+		IDs:                ids,
+		Values:             values64,
+		PrevKeyframeValues: p.prevKeyframeValues,
+		DictDeltas:         dictDeltas,
+		FullDict:           p.tracker.FullDict(),
+		Tombstones:         tombstones,
+	})
 	if err != nil {
 		panic(err)
 	}
 
 	f.FrameType = wire.FrameTypeKeyframe
-	f.Flags |= flags
-	f.Payload = payload
-	f.QuantScale = scale
-	f.DictRoot = wire.ComputeDictRoot(ids)
-	if golden {
-		f.DictDeltas = p.tracker.FullDict()
-	} else {
-		f.DictDeltas = dictDeltas
-	}
-	p.prevKeyframeValues = values32
+	f.Flags |= res.Flags
+	f.Payload = res.Payload
+	f.QuantScale = res.QuantScale
+	f.DictRoot = res.DictRoot
+	f.DictDeltas = res.DictDeltas
+	p.prevKeyframeValues = res.Values32
 	// ADR-003: refresh the open-loop baseline to the true current value at
 	// every keyframe (see pkg/sketch/lifecycle.go's Tracker.CurrentValues
 	// doc comment) — otherwise residuals accumulate unbounded from birth
 	// and substrate (c) never sees a nonzero keyframe-to-keyframe delta.
 	p.pred.LoadKeyframe(values64)
-}
-
-func adaptiveScale(y []float64, bits int) float32 {
-	var maxAbs float64
-	for _, v := range y {
-		if a := math.Abs(v); a > maxAbs {
-			maxAbs = a
-		}
-	}
-	limit := 127.0
-	if bits == 16 {
-		limit = 32767.0
-	}
-	return scaleFor(maxAbs, limit)
-}
-
-func adaptiveKDeltaScale(cur, prev map[uint64]float32) float32 {
-	var maxAbs float64
-	for id, v := range cur {
-		d := math.Abs(float64(v - prev[id]))
-		if d > maxAbs {
-			maxAbs = d
-		}
-	}
-	return scaleFor(maxAbs, 32767.0)
-}
-
-func scaleFor(maxAbs, steps float64) float32 {
-	if maxAbs <= 0 {
-		return minQuantScale
-	}
-	s := float32(maxAbs / steps)
-	if s <= 0 {
-		return minQuantScale
-	}
-	return s
 }

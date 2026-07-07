@@ -97,6 +97,18 @@ type Config struct {
 	// this map is not merged tier: its Results always carry
 	// recover.MergedTrustNA and the guardrail is never evaluated for it.
 	MergedViews map[uint16]MergedPolicy
+
+	// EmitterRosterTTL, if > 0, reaps a shard's silent emitters: once an
+	// emitter's LastArrival is this old, every series-ownership claim it
+	// still holds (ADR-008 amendment) is released, evicting from the
+	// shared view.Dict any series that was its sole remaining owner. This
+	// is the roster-liveness path for a dead emitter that never sends an
+	// explicit tombstone (crash, permanent partition) — an emitter that
+	// shuts down cleanly already tombstones its own series via Expire(),
+	// which releases ownership immediately and needs no TTL. <= 0 disables
+	// roster reaping entirely (an emitter's ownership then only ever
+	// releases via an explicit tombstone).
+	EmitterRosterTTL time.Duration
 }
 
 // recoverOptions builds the recover.Options this Config implies for one
@@ -208,6 +220,14 @@ type EmitterState struct {
 	ClockSkewMs      int64
 	clockSkewAlerted bool
 	LastArrival      time.Time
+
+	// reaped is set once this emitter's ownership claims have been
+	// released by the roster-liveness sweep (reapStaleEmitters), so a
+	// still-silent emitter isn't re-swept (and its already-released, or
+	// never-held, claims re-"released") on every subsequent frame from its
+	// shard-mates. A fresh frame from this same emitter naturally reclaims
+	// ownership of whatever it re-births, regardless of this flag.
+	reaped bool
 }
 
 // emitterViewState mirrors one emitter's own dict_delta stream for one
@@ -219,6 +239,13 @@ type emitterViewState struct {
 	dict               *recover.Dictionary
 	prevKeyframeValues map[uint64]float32
 	seenGolden         bool
+
+	// sharedView is the ViewState this (emitter, view) pair last
+	// contributed to — refreshed on every HandleFrame call — so the
+	// roster-liveness sweep can release this emitter's ownership claims
+	// (walking dict.ActiveIDs()) without needing to re-derive the current
+	// viewKey (epoch/keyVersion aren't otherwise tracked per emitterViewState).
+	sharedView *ViewState
 }
 
 // ViewState is the shared, coverage-gated recovery state for one (shard,
@@ -230,7 +257,25 @@ type ViewState struct {
 	ViewID uint16
 	Seed   uint64
 
-	Dict      *recover.Dictionary
+	// Dict is the shared union dictionary every contributing emitter's
+	// dict_deltas apply to; it stays a dumb registry (ApplyDelta has no
+	// ownership concept of its own — see pkg/recover/dictionary.go). Owners
+	// is where that concept actually lives: ADR-008 amendment ("Ownership
+	// & Eviction").
+	Dict *recover.Dictionary
+
+	// Owners maps each series ID currently represented in Dict to the set
+	// of emitter IDs that have birthed it and not yet released it (via an
+	// explicit tombstone or roster-liveness reap). claimOwner/releaseOwner
+	// are the only mutators; HandleFrame's dict-delta loop and
+	// reapStaleEmitters are the only callers. A series is only actually
+	// evicted from Dict once its owner set is empty — one emitter's
+	// tombstone can never evict a series a *different* emitter still
+	// claims (ADR-008 amendment's "err additive" rule: a wrongful eviction
+	// corrupts attribution; a zombie entry only costs one benign CSR
+	// column).
+	Owners map[uint64]map[uint64]struct{}
+
 	Windows   map[uint32]*WindowState
 	Watermark *Watermark
 	Breaker   *sketch.Breaker // decode-side churn breaker, defense in depth (see Config.MaxBirthsPerViewPerMin)
@@ -276,6 +321,41 @@ type windowSnapshotBlob struct {
 	codec wire.Codec
 }
 
+// claimOwner records that emitterID currently claims seriesID as active
+// (called for every birth dict_delta, including a re-birth after a prior
+// tombstone). Presence is cheap and additive by design (ADR-008
+// amendment): a redundant claim from an emitter that already owns
+// seriesID is a no-op.
+func (v *ViewState) claimOwner(seriesID, emitterID uint64) {
+	owners, ok := v.Owners[seriesID]
+	if !ok {
+		owners = make(map[uint64]struct{})
+		v.Owners[seriesID] = owners
+	}
+	owners[emitterID] = struct{}{}
+}
+
+// releaseOwner removes emitterID's claim on seriesID (called for an
+// explicit tombstone dict_delta, or by reapStaleEmitters on a roster-TTL
+// expiry) and reports whether seriesID's owner set is now empty — the only
+// condition under which it is safe to actually evict seriesID from the
+// shared Dict (ADR-008 amendment: eviction requires proof of universal
+// absence, never a single emitter's say-so). A seriesID with no recorded
+// owners at all (e.g. Dict has no entry for it either, so there is nothing
+// to wrongly evict) is reported empty vacuously.
+func (v *ViewState) releaseOwner(seriesID, emitterID uint64) (nowEmpty bool) {
+	owners, ok := v.Owners[seriesID]
+	if !ok {
+		return true
+	}
+	delete(owners, emitterID)
+	if len(owners) == 0 {
+		delete(v.Owners, seriesID)
+		return true
+	}
+	return false
+}
+
 func (w *WindowState) merge(emitterID uint64, y []float64) {
 	if w.Y == nil {
 		w.Y = append([]float64(nil), y...)
@@ -303,6 +383,18 @@ func (e *Engine) HandleFrame(ctx context.Context, f *wire.Frame) {
 	e.metrics.AddWireBytes(f.ShardID, wireBytes)
 	if f.FrameType == wire.FrameTypeKeyframe && f.Flags&wire.FlagKDelta == 0 {
 		e.metrics.AddFullDictKeyframeBytes(f.ShardID, wireBytes)
+		// Shadow-mode dict-block compression measurement (ADR-017 pilot week,
+		// docs/rfc/palimpsest-wire-v2.md §10.3): compress the dict_delta block
+		// with gzip (always-registered, no external dep — CodecGzip is pre-
+		// registered by pkg/wire itself) to measure what a real deployment's
+		// dictionary would weigh compressed, settling the Merkle-vs-
+		// reconcile-by-ID-list decision without a separate exercise.
+		if gzipBlock, cerr := wire.CompressDictBlock(wire.CodecGzip, f.DictDeltas); cerr == nil {
+			e.metrics.AddDictBlockShadow(f.ShardID,
+				int64(wire.DictBlockRawBytes(f.DictDeltas)),
+				int64(len(gzipBlock)),
+				int64(len(f.DictDeltas)))
+		}
 	}
 
 	shard := e.getOrCreateShard(f.ShardID)
@@ -335,18 +427,33 @@ func (e *Engine) HandleFrame(ctx context.Context, f *wire.Frame) {
 	}
 
 	view := shard.getOrCreateView(e.cfg, f.Epoch, f.ViewID, f.KeyVersion, tenantKey)
+	evs.sharedView = view
 
 	e.trackClockSkew(shard, em, view, f, now)
+	e.reapStaleEmitters(ctx, shard, f.EmitterID, now)
 
-	var tombstones []uint64
+	// ADR-008 amendment ("Ownership & Eviction"): a birth claims ownership
+	// immediately (additive, cheap — a redundant claim is a no-op). A
+	// tombstone only ever releases THIS emitter's own claim; it evicts
+	// seriesID from the shared view.Dict only once every claim on it is
+	// gone, so one emitter's tombstone can never corrupt a *different*
+	// emitter's still-active contribution (e.g. an old replica's tombstone
+	// racing a new replica's birth for the same logical series during a
+	// routine pod migration — see the amendment for the eviction bug this
+	// replaced).
+	var evicted []uint64
 	for _, dd := range f.DictDeltas {
-		evs.dict.ApplyDelta(dd)
-		isNewBirth := view.Dict.ApplyDelta(dd)
+		evs.dict.ApplyDelta(dd) // per-emitter mirror: always reflects only this emitter's own births/tombstones, ownership-agnostic
 		if dd.IsTombstone() {
-			e.metrics.IncTombstonesApplied(1)
-			tombstones = append(tombstones, dd.ID)
+			if view.releaseOwner(dd.ID, f.EmitterID) {
+				view.Dict.ApplyDelta(dd)
+				e.metrics.IncTombstonesApplied(1)
+				evicted = append(evicted, dd.ID)
+			}
 			continue
 		}
+		isNewBirth := view.Dict.ApplyDelta(dd)
+		view.claimOwner(dd.ID, f.EmitterID)
 		e.metrics.IncBirthsApplied(1)
 		shard.SeriesNames[dd.ID] = string(dd.Name)
 		if isNewBirth && view.Breaker != nil {
@@ -357,8 +464,8 @@ func (e *Engine) HandleFrame(ctx context.Context, f *wire.Frame) {
 			}
 		}
 	}
-	if len(tombstones) > 0 {
-		e.emitEvents(ctx, e.matcher.EvalAbsence(tombstones), shard, f.EmitterID, f.Epoch, f.ViewID, f.Seq, now)
+	if len(evicted) > 0 {
+		e.emitEvents(ctx, e.matcher.EvalAbsence(evicted), shard, f.EmitterID, f.Epoch, f.ViewID, f.Seq, now)
 	}
 
 	switch f.FrameType {
@@ -375,6 +482,9 @@ func (e *Engine) HandleFrame(ctx context.Context, f *wire.Frame) {
 
 func (e *Engine) handleKeyframe(ctx context.Context, shard *ShardState, evs *emitterViewState, view *ViewState, f *wire.Frame, now time.Time) {
 	kdelta := f.Flags&wire.FlagKDelta != 0
+	if !kdelta {
+		e.reconcileGoldenDict(ctx, shard, evs, view, f, now)
+	}
 	ids := evs.dict.ActiveIDs()
 
 	// ADR-006 §Addendum: a KEYFRAME's Payload is compressed under f.Codec
@@ -405,6 +515,13 @@ func (e *Engine) handleKeyframe(ctx context.Context, shard *ShardState, evs *emi
 		return
 	}
 
+	// For a golden keyframe, this is a POST-CONDITION of reconcileGoldenDict
+	// above: evs.dict's active set was just reconciled to exactly this
+	// frame's announced IDs, so a mismatch here means f.DictRoot itself
+	// doesn't match the ID set the same frame announced -- an encoder bug,
+	// not a decoder drift the reconciliation could have healed (ADR-008
+	// amendment). For a KDELTA keyframe, nothing above touched evs.dict:
+	// this remains the sole drift detector, exactly as before.
 	if !evs.dict.VerifyKeyframe(f.DictRoot) {
 		// ADR-017 evidence gate: count only the first frame of a mismatch
 		// episode (view.DictMismatchSince stays set for every subsequent
@@ -455,6 +572,58 @@ func (e *Engine) handleKeyframe(ctx context.Context, shard *ShardState, evs *emi
 			})
 		}
 		_ = e.seriesSink.WriteSeries(ctx, samples)
+	}
+}
+
+// reconcileGoldenDict is the decoder-side half of the ADR-008 amendment
+// ("Amendment: golden reconciliation and union-dictionary ownership"): a
+// golden (Full) keyframe's DictDeltas are authoritative-replace, but ONLY
+// for this emitter's own per-emitter mirror, evs.dict -- every ID evs.dict
+// still holds active that this frame's non-tombstone entries don't
+// announce is stale and is healed here. This is what makes a dropped
+// tombstone a bounded, not permanent, divergence: an encoder tombstones a
+// given ID exactly once (when Tracker.Expire() fires) and never again, so
+// if that one dict_delta is lost in transit, incremental delta application
+// alone would hold the stale ID forever. A golden's own DictRoot is
+// computed over the encoder's true active set (which already excludes
+// anything Expire() dropped, including in this same window per the
+// companion encode-side fix), so reconciling evs.dict down to exactly what
+// this frame announces is always the correct target state, not a guess.
+//
+// view.Dict (the shared union dictionary) is NEVER reconciled wholesale
+// from a single emitter's golden. Healing a stale ID here only ever
+// releases THIS emitter's ownership claim on it (ViewState.releaseOwner),
+// exactly like an explicit tombstone dict_delta would -- it evicts from
+// view.Dict only once that empties the series' owner set, so one
+// emitter's golden can never evict a series a *different* emitter still
+// actively claims (the same pod-migration hazard the ownership amendment
+// closes for explicit tombstones).
+//
+// KDELTA keyframes are untouched by this: a KDELTA's dict_root check
+// remains the sole drift detector (handleKeyframe's VerifyKeyframe call),
+// exactly as before this amendment.
+func (e *Engine) reconcileGoldenDict(ctx context.Context, shard *ShardState, evs *emitterViewState, view *ViewState, f *wire.Frame, now time.Time) {
+	announced := make(map[uint64]struct{}, len(f.DictDeltas))
+	for _, dd := range f.DictDeltas {
+		if !dd.IsTombstone() {
+			announced[dd.ID] = struct{}{}
+		}
+	}
+
+	var evicted []uint64
+	for _, id := range evs.dict.ActiveIDs() {
+		if _, ok := announced[id]; ok {
+			continue
+		}
+		evs.dict.ApplyDelta(wire.DictDelta{ID: id, Flags: wire.DictFlagTombstone})
+		if view.releaseOwner(id, f.EmitterID) {
+			view.Dict.ApplyDelta(wire.DictDelta{ID: id, Flags: wire.DictFlagTombstone})
+			e.metrics.IncTombstonesApplied(1)
+			evicted = append(evicted, id)
+		}
+	}
+	if len(evicted) > 0 {
+		e.emitEvents(ctx, e.matcher.EvalAbsence(evicted), shard, f.EmitterID, f.Epoch, f.ViewID, f.Seq, now)
 	}
 }
 
@@ -638,6 +807,49 @@ func (e *Engine) trackClockSkew(shard *ShardState, em *EmitterState, view *ViewS
 	}
 }
 
+// reapStaleEmitters is the roster-liveness half of the ADR-008 amendment:
+// it releases every series-ownership claim held by any OTHER emitter in
+// shard (excludeEmitterID is the one reporting the current frame, which
+// has just proven itself alive and is handled by the normal dict-delta
+// loop instead) whose LastArrival is older than Config.EmitterRosterTTL
+// and hasn't already been reaped. A cleanly-shutdown emitter tombstones
+// its own series via Expire() and needs none of this; this path exists
+// for a crashed or permanently-partitioned emitter that never gets the
+// chance to send an explicit tombstone — without it, its claimed series
+// would sit in the shared dictionary forever, immune to eviction, even
+// after every other emitter has moved on. Caller must hold shard.mu (via
+// HandleFrame).
+func (e *Engine) reapStaleEmitters(ctx context.Context, shard *ShardState, excludeEmitterID uint64, now time.Time) {
+	if e.cfg.EmitterRosterTTL <= 0 {
+		return
+	}
+	for _, em := range shard.Emitters {
+		if em.EmitterID == excludeEmitterID || em.reaped || now.Sub(em.LastArrival) < e.cfg.EmitterRosterTTL {
+			continue
+		}
+		em.reaped = true
+		for viewID, evs := range em.Views {
+			if evs.sharedView == nil {
+				continue
+			}
+			var evicted []uint64
+			for _, id := range evs.dict.ActiveIDs() {
+				if evs.sharedView.releaseOwner(id, em.EmitterID) {
+					evs.sharedView.Dict.ApplyDelta(wire.DictDelta{ID: id, Flags: wire.DictFlagTombstone})
+					evicted = append(evicted, id)
+				}
+			}
+			if len(evicted) == 0 {
+				continue
+			}
+			e.metrics.IncTombstonesApplied(len(evicted))
+			e.emitEvents(ctx, e.matcher.EvalAbsence(evicted), shard, em.EmitterID, evs.sharedView.Epoch, viewID, 0, now)
+		}
+		e.metrics.IncEmittersReaped()
+		e.fireAlert(shard.ShardID, em.EmitterID, fmt.Sprintf("roster liveness: emitter silent for >= %s, released its series-ownership claims", e.cfg.EmitterRosterTTL), now)
+	}
+}
+
 func (e *Engine) fireAlert(shardID, emitterID uint64, reason string, now time.Time) {
 	e.mu.Lock()
 	e.alerts = append(e.alerts, Alert{Time: now, ShardID: shardID, EmitterID: emitterID, Reason: reason})
@@ -761,6 +973,7 @@ func (s *ShardState) getOrCreateView(cfg Config, epoch uint64, viewID uint16, ke
 			ViewID:                viewID,
 			Seed:                  seed,
 			Dict:                  recover.NewDictionary(),
+			Owners:                make(map[uint64]map[uint64]struct{}),
 			Windows:               make(map[uint32]*WindowState),
 			Watermark:             NewWatermark(cfg.AllowedLateness, cfg.RepairHorizon),
 			FirstArrivalForWindow: make(map[uint32]time.Time),

@@ -5,14 +5,20 @@
   "version": 1,
   "editable": true,
   "timezone": "browser",
-  "time": { "from": "now-15m", "to": "now" },
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
   "refresh": "10s",
   "templating": {
     "list": [
       {
         "name": "logical_name",
         "type": "query",
-        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
         "query": "label_values(palimpsest_logical_name)",
         "refresh": 2,
         "sort": 1,
@@ -29,13 +35,20 @@
       "pluginId": "prometheus"
     }
   ],
-  "annotations": { "list": [] },
+  "annotations": {
+    "list": []
+  },
   "panels": [
     {
       "id": 1,
       "type": "text",
       "title": "How to read this dashboard",
-      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 0 },
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
       "options": {
         "mode": "markdown",
         "content": "**Layer 1 (ADR-010/ADR-011)** is the exact, PromQL-queryable keyframe layer: palimpsestd writes every recovered/keyframe value for a logical series to Prometheus via remote-write, tagged with the `palimpsest_logical_name` label (see `internal/adapters/remoteprom`). The panel below plots one series' exact value over time as **points, not an interpolated line** — deliberately, because the *density* of points is itself informative:\n\n- During quiet windows, points land only at **keyframe cadence** (`keyframe_every` x `flush_interval` — a 60s grid at typical production settings; faster in this demo).\n- During a detected deviation, `solveWindow` additionally writes the **recovered value every flush** (`flush_interval`, ~10s) for as long as that series stays in the recovered support set.\n\nSo a sparse 60s grid that suddenly densifies to ~10s points *is* the anomaly detail overlay — no separate query or annotation channel is needed, because both layers share the same exact-value wire path (ADR-010's Layer 1) and the same PromQL series. Pick a series with `$logical_name` above; one with an injected anomaly, drift, or a hot instance (see `demo/README.md`) shows the effect most clearly."
@@ -46,8 +59,16 @@
       "type": "timeseries",
       "title": "Layer 1 exact value — $logical_name",
       "description": "Raw points (no interpolation): sparse = keyframe-cadence only (quiet), dense = recovered-value writes during a detected deviation (ADR-009/ADR-010).",
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 5 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -61,7 +82,10 @@
       },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
           "expr": "{__name__=~\".+\", palimpsest_logical_name=\"$logical_name\"}",
           "legendFormat": "{{palimpsest_logical_name}}",
           "refId": "A"
@@ -73,17 +97,117 @@
       "type": "table",
       "title": "Known series (label_values)",
       "description": "Every palimpsest_logical_name Layer 1 has seen so far this session — pick one for the panel above.",
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 17 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 17
+      },
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
           "expr": "count by (palimpsest_logical_name) ({__name__=~\".+\", palimpsest_logical_name=~\".+\"})",
           "format": "table",
           "instant": true,
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Shadow: dict-block bytes/entry (raw vs gzip)",
+      "description": "Per-shard dict_delta block bytes per entry for golden (non-KDELTA) keyframes: raw (uncompressed) vs gzip-compressed. Emitted every 60s by palimpsestd as ADR-017 pilot-week shadow instrumentation (docs/rfc/palimpsest-wire-v2.md §10.3). Raw bpe ~52 B on synthetic names; real production names (k8s: 80-200 B) will be higher.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 25
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "palimpsest_dict_block_raw_bpe",
+          "legendFormat": "raw bpe shard={{palimpsest_shard_id}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "palimpsest_dict_block_gzip_bpe",
+          "legendFormat": "gzip bpe shard={{palimpsest_shard_id}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Shadow: full-dict-keyframe fraction with gzip dict-block (%)",
+      "description": "Simulated full-dict-keyframe-bytes / total-wire-bytes percentage if the dict_delta block were gzip-compressed, per shard. The 10% evidence-gate threshold (ADR-017) is shown as a reference; values below it would (on these names) suggest dict-block compression closes the gate. Real production names compress less well — see PERF.md.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 25
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "palimpsest_dict_block_gzip_fraction",
+          "legendFormat": "gzip fraction % shard={{palimpsest_shard_id}}",
+          "refId": "A"
+        }
+      ],
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          {
+            "color": "green",
+            "value": null
+          },
+          {
+            "color": "yellow",
+            "value": 10
+          }
+        ]
+      }
     }
   ]
 }

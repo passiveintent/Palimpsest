@@ -142,7 +142,7 @@ func (s *mergedSim) Step(window uint32, now time.Time, ch *channel) error {
 			acc.Update([]byte(name), v)
 		}
 		y, _ := acc.Flush()
-		scale := adaptiveScale(y, s.cfg.Bits)
+		scale := wire.AdaptiveScale(y, s.cfg.Bits)
 		payload, err := wire.Quantize(y, uint8(s.cfg.Bits), scale)
 		if err != nil {
 			return fmt.Errorf("plsim: merged-tier weak observer %d: %w", agent, err)

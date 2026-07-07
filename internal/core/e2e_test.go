@@ -456,7 +456,7 @@ func TestE2E_DegradedHealsOnGoldenKeyframe(t *testing.T) {
 			y[bucket] -= contrib
 		}
 	}
-	scale := residualScale(y, bits)
+	scale := wire.AdaptiveScale(y, bits)
 	payload, err := wire.Quantize(y, uint8(bits), scale)
 	if err != nil {
 		t.Fatalf("Quantize: %v", err)

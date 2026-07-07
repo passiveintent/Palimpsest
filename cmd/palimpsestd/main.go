@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -83,6 +84,7 @@ type flags struct {
 	driftThreshold              float64
 	clockSkewToleranceMs        int64
 	churnMaxBirthsPerViewPerMin int
+	emitterRosterTTL            time.Duration
 
 	snapshotTTL time.Duration
 	snapshotMax int
@@ -122,6 +124,7 @@ func parseFlags() flags {
 	flag.Float64Var(&f.driftThreshold, "drift-threshold", 10.0, "substrate (c): keyframe-to-keyframe absolute value change flagged as slow drift")
 	flag.Int64Var(&f.clockSkewToleranceMs, "clock-skew-tolerance-ms", 50, "per-emitter arrival-time spread above which a clock-skew Alert fires; <=0 disables")
 	flag.IntVar(&f.churnMaxBirthsPerViewPerMin, "churn-max-births-per-view-per-min", 0, "decode-side churn breaker: shard-wide dictionary birth rate limit, defense in depth beyond any single encoder's own breaker; 0 disables")
+	flag.DurationVar(&f.emitterRosterTTL, "emitter-roster-ttl", 0, "roster liveness (ADR-008 amendment): once a silent emitter's LastArrival exceeds this, its series-ownership claims are released, evicting from the shared dictionary any series it was the sole remaining owner of; a cleanly-shutdown emitter tombstones its own series immediately and needs none of this — this only covers a crashed or permanently-partitioned one; <=0 disables")
 
 	flag.DurationVar(&f.snapshotTTL, "snapshot-ttl", time.Hour, "forensic dashcam snapshot retention")
 	flag.IntVar(&f.snapshotMax, "snapshot-max", 10000, "forensic dashcam snapshot store capacity")
@@ -226,6 +229,7 @@ func run() error {
 		DriftThreshold:         f.driftThreshold,
 		ClockSkewToleranceMs:   f.clockSkewToleranceMs,
 		MaxBirthsPerViewPerMin: f.churnMaxBirthsPerViewPerMin,
+		EmitterRosterTTL:       f.emitterRosterTTL,
 	}
 	engine := core.New(cfg, anomalySink, seriesSink, m, fstore)
 
@@ -299,6 +303,28 @@ func run() error {
 		}()
 	}
 
+	if f.remoteWriteURL != "" {
+		// Shadow-mode dict-block compression gauges (ADR-017 pilot week):
+		// every 60 s, convert the accumulated dict-block shadow counters to
+		// bytes-per-entry and a compressed-fraction gauge and remote-write
+		// them to Prometheus so the demo Grafana dashboard shows them during
+		// the pilot week (docs/rfc/palimpsest-wire-v2.md §10.3).
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ticker := time.NewTicker(60 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case t := <-ticker.C:
+					emitDictBlockShadowGauges(ctx, m, seriesSink, t)
+				}
+			}
+		}()
+	}
+
 	log.Printf("palimpsestd: started (frames-dir=%q allow-pull=%v http=%q kafka-brokers=%q kafka-topic=%q kafka-group=%q out-dir=%q truth=%q)",
 		f.framesDir, f.allowPull, f.httpAddr, f.kafkaBrokers, f.kafkaTopic, f.kafkaGroup, f.outDir, f.truthPath)
 
@@ -366,4 +392,55 @@ func saveHeartbeat(state *memstate.Store) {
 		return
 	}
 	_ = state.Save(context.Background(), "heartbeat", buf.Bytes())
+}
+
+// emitDictBlockShadowGauges converts the accumulated dict-block shadow
+// counters to per-shard gauge samples and writes them to sink. Called
+// every 60 s (ADR-017 pilot week; docs/rfc/palimpsest-wire-v2.md §10.3).
+// Three gauges per shard: palimpsest_dict_block_raw_bpe (raw bytes/entry),
+// palimpsest_dict_block_gzip_bpe (gzip bytes/entry), and
+// palimpsest_dict_block_gzip_fraction (gzip full-dict-keyframe bytes /
+// total wire bytes, in percent). Errors are logged, not fatal.
+func emitDictBlockShadowGauges(ctx context.Context, m *metrics.Metrics, sink ports.SeriesSink, now time.Time) {
+	snap := m.Snapshot()
+	rawMap, _ := snap["dict_block_raw_bytes"].(map[string]int64)
+	gzipMap, _ := snap["dict_block_gzip_bytes"].(map[string]int64)
+	entriesMap, _ := snap["dict_block_entries"].(map[string]int64)
+	totalMap, _ := snap["wire_bytes_total"].(map[string]int64)
+	fullMap, _ := snap["full_dict_keyframe_bytes"].(map[string]int64)
+	if len(rawMap) == 0 {
+		return
+	}
+	tsMs := now.UnixMilli()
+	var samples []ports.Sample
+	for shardKey, rawBytes := range rawMap {
+		shardID, err := strconv.ParseUint(shardKey, 10, 64)
+		if err != nil {
+			continue
+		}
+		entries := entriesMap[shardKey]
+		gzipBytes := gzipMap[shardKey]
+		totalBytes := totalMap[shardKey]
+		fullBytes := fullMap[shardKey]
+		if entries > 0 {
+			samples = append(samples,
+				ports.Sample{Name: "palimpsest_dict_block_raw_bpe", ShardID: shardID, Value: float64(rawBytes) / float64(entries), TimestampMs: tsMs},
+				ports.Sample{Name: "palimpsest_dict_block_gzip_bpe", ShardID: shardID, Value: float64(gzipBytes) / float64(entries), TimestampMs: tsMs},
+			)
+		}
+		if totalBytes > 0 {
+			// full_compressed = (full - raw) + gzip: replace the raw dict block
+			// bytes in the numerator with the compressed equivalent.
+			fullCompressed := fullBytes - rawBytes + gzipBytes
+			samples = append(samples,
+				ports.Sample{Name: "palimpsest_dict_block_gzip_fraction", ShardID: shardID, Value: 100 * float64(fullCompressed) / float64(totalBytes), TimestampMs: tsMs},
+			)
+		}
+	}
+	if len(samples) == 0 {
+		return
+	}
+	if err := sink.WriteSeries(ctx, samples); err != nil {
+		log.Printf("palimpsestd: emitting dict-block shadow gauges: %v", err)
+	}
 }

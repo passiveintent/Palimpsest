@@ -37,10 +37,28 @@ Full methodology, exact commands/test names, and the complete tables are in
 
 | Condition | Threshold | Measured | Result |
 | --- | --- | --- | --- |
-| Full-dict-keyframe bytes / total wire bytes, churn=10/min | 10% | **34.7%** | exceeds |
-| Full-dict-keyframe bytes / total wire bytes, churn=60/min | 10% | **28.5%** | exceeds |
-| Full-dict-keyframe bytes / total wire bytes, churn=300/min | 10% | **18.1%** | exceeds |
+| Full-dict-keyframe bytes / total wire bytes, churn=10/min | 10% | **34.763%** | exceeds |
+| Full-dict-keyframe bytes / total wire bytes, churn=60/min | 10% | **28.516%** | exceeds |
+| Full-dict-keyframe bytes / total wire bytes, churn=300/min | 10% | **18.264%** | exceeds |
+| Full-dict-keyframe bytes / total wire bytes, churn=10/min, dict-block gzip | 10% | **13.098%** | exceeds |
+| Full-dict-keyframe bytes / total wire bytes, churn=60/min, dict-block gzip | 10% | **10.766%** | exceeds (barely — see note) |
+| Full-dict-keyframe bytes / total wire bytes, churn=300/min, dict-block gzip | 10% | **6.934%** | within (synthetic-name optimism — see note) |
 | Time-to-heal (isolated, single dropped birth, no other confound) | 20 min (2x a 10 min golden cycle) | 9 min | within bound |
+
+**Dict-block compression note.** Routing the dict_delta block through the
+existing codec registry (gzip, always-registered; `pkg/wire.CompressDictBlock`)
+reduces the golden-keyframe fraction but does not close Condition 1 at
+realistic churn rates: 13.098% and 10.766% at churn=10 and churn=60/min
+still exceed the 10% threshold. The churn=300/min compressed result (6.934%)
+falls below threshold, but only on synthetic names (`evidence_metric_NNNNN|shard=9001|agg=sum`,
+~37 B, highly repetitive) that compress at ~4.1:1 — real Kubernetes metric
+names (80-200 B, varying deployment IDs and label combinations) will compress
+less well. Shadow-mode instrumentation (`palimpsest_dict_block_raw_bpe` /
+`palimpsest_dict_block_gzip_bpe` Prometheus gauges, emitted by palimpsestd
+every 60s; `internal/core/engine.go`'s `HandleFrame` shadow path) produces
+real-name numbers during the pilot week. See `docs/rfc/palimpsest-wire-v2.md`
+§10.3 for the cheaper "reconcile-by-ID-list" alternative that Merkle must
+beat before it is chosen.
 
 All three churn rates tested (10, 60, 300 events/min, each run for a
 1h-equivalent 360 windows at plsim's own defaults: 10s flush interval, 300
@@ -102,3 +120,10 @@ window's tombstones *alongside* `FullDict()`'s adds, not instead of them —
 frame type). Per this prompt's guardrails ("no protocol changes... discovered
 defects become a v3 proposal appendix, not silent edits"), it is documented
 here and in the RFC's v3 appendix, not patched in this change.
+
+**Update:** this defect has since been fixed (v2-compatible, no wire-format
+change) via `pkg/wire.BuildKeyframe`'s golden path (encoder fix) and
+`internal/core/engine.go`'s `reconcileGoldenDict` (decoder-side defense in
+depth). See `docs/adr/ADR-008-ephemeral-cardinality.md`'s "Amendment: golden
+reconciliation and union-dictionary ownership" and
+`docs/rfc/palimpsest-wire-v2.md` §11 (Errata).

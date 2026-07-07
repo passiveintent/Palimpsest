@@ -433,26 +433,59 @@ logical series (same scale as the "Metadata overhead" section above),
 defaults — golden every 60 windows, 6 goldens per run), lossless delivery
 (no dropped/duplicated/reordered frames):
 
+**Uncompressed dict blocks (current wire format):**
+
 | churn (events/min) | total wire bytes | full-dict-keyframe bytes | fraction | logical series (end) |
 | --- | --- | --- | --- | --- |
-| 10 | 1,070,478 | 371,982 | **34.7%** | 599 |
-| 60 | 1,428,302 | 406,492 | **28.5%** | 2,100 |
-| 300 | 3,140,062 | 568,892 | **18.1%** | 9,300 |
+| 10 | 1,070,703 | 372,207 | **34.763%** | 599 |
+| 60 | 1,429,427 | 407,617 | **28.516%** | 2,100 |
+| 300 | 3,145,687 | 574,517 | **18.264%** | 9,300 |
 
-All three clear the decision rule's 10% threshold, at every tested churn
-rate — including the *lowest*. The fraction falls as churn rises because
-the denominator (steady per-window `dict_delta` churn traffic, already
-documented above as up to ~36% of bytes on its own) grows faster than the
-numerator (six golden keyframes' bytes, which grow only mildly with
-cardinality drift): the golden-keyframe tax is largest, relatively, exactly
-when a fleet is quiet — which is most of the time.
+**With dict-block gzip compression (codec byte extended to dict section):**
+
+The dict_delta block — names ++ binary-coded IDs/flags/values — is the
+dominant contribution to golden keyframe bytes. Routing it through the existing
+codec registry (gzip, always-registered; `pkg/wire.CompressDictBlock`) shows
+what a dict-block-compressed deployment would report:
+
+| churn (events/min) | dict block raw bytes | dict block gzip bytes | gzip ratio | full-dict-gzip fraction[^1] |
+| --- | --- | --- | --- | --- |
+| 10 | 305,835 | 73,871 | **4.1:1** | **13.098%** |
+| 60 | 335,125 | 81,395 | **4.1:1** | **10.766%** |
+| 300 | 473,225 | 116,829 | **4.1:1** | **6.934%** |
+
+[^1]: Synthetic-name optimism: `TestDictRootEvidenceGateMeasurement` uses
+generated names (`evidence_metric_NNNNN|shard=9001|agg=sum`, ~37 B each) that
+are highly compressible — more so than real Kubernetes metric names, which
+contain varying deployment IDs, namespace names, and label combinations (often
+80-200 B, less repetitive). Real production compression ratios will be lower.
+The 10.766% at churn=60/min (0.8 points above the gate threshold) is
+therefore an optimistic floor, not a representative estimate.
+
+With dict-block compression, Condition 1 is **still met** at churn=10/min
+(13.098%) and churn=60/min (10.766%) — the two most realistic churn rates.
+Only at churn=300/min, and only on synthetic names, does the fraction fall
+below 10%. The backlog item remains open.
+
+All three uncompressed churn rates clear the decision rule's 10% threshold.
+The fraction falls as churn rises because the denominator (steady per-window
+`dict_delta` churn traffic, already documented above as up to ~36% of bytes
+on its own) grows faster than the numerator (six golden keyframes' bytes,
+which grow only mildly with cardinality drift): the golden-keyframe tax is
+largest, relatively, exactly when a fleet is quiet — which is most of the
+time. Shadow-mode instrumentation (`Metrics.{DictBlockRawBytes,DictBlockGzipBytes,DictBlockEntries}`,
+wired in `internal/core/engine.go`'s `HandleFrame` for every golden
+keyframe) reports these numbers continuously during the pilot week via
+`palimpsest_dict_block_raw_bpe` / `palimpsest_dict_block_gzip_bpe`
+Prometheus gauges so real-name compressibility can be compared against the
+synthetic-name floor above.
 
 ### Condition 2: time-to-heal (mismatch -> verified root)
 
-Lossless delivery does not exercise the heal path by itself (a genuinely
-clean run never mismatches — see the Discovered defect note below for why
-these particular runs did anyway), so
-`internal/core.TestDictRootHealTimeMeasurement` isolates it directly: one
+Lossless delivery does not exercise the heal path by itself — a genuinely
+clean run produces no mismatches (the Condition 1 re-run above confirms
+this now holds) — so `internal/core.TestDictRootHealTimeMeasurement`
+isolates it directly: one
 dict_delta-bearing frame is deliberately dropped shortly after the run's
 opening golden keyframe (simulating one lost delivery), with `series_ttl`
 set long enough that no tombstone fires during the run — isolating the
@@ -464,18 +497,18 @@ dropped at window 3; dict_root_mismatches=1; heal_max=9m0s; healed=true
 ```
 
 9 minutes is comfortably under the decision rule's 2x golden-cycle
-threshold (20 minutes) — *when the mechanism works as designed*. It is
-independent of churn rate: healing is gated purely on the next golden
-keyframe, not on how much churn happened in between.
+threshold (20 minutes). It is independent of churn rate: healing is gated
+purely on the next golden keyframe, not on how much churn happened in
+between.
 
-### Discovered defect (not fixed in this prompt; GUARDRAILS forbid protocol changes here)
+### Discovered defect (now fixed)
 
-Running Condition 1's lossless scenario surfaced a real bug, not a
-contrived one: at all three tested churn rates, `dict_root_mismatches` came
-back **1**, and the shard was still DEGRADED at the end of the run — despite
-no frame ever being dropped. Root cause: `cmd/plsim/encoder.go`,
+Running Condition 1's lossless scenario originally surfaced a real bug, not
+a contrived one: at all three tested churn rates, `dict_root_mismatches`
+came back **1**, and the shard was still DEGRADED at the end of the run —
+despite no frame ever being dropped. Root cause: `cmd/plsim/encoder.go`,
 `otel/processor/csresidual/processor.go`, and `internal/core`'s test mirror
-all share this pattern on a golden keyframe window:
+all shared this pattern on a golden keyframe window:
 
 ```go
 tombstones := tracker.Expire(now, seriesTTL)   // mutates tracker.active NOW
@@ -487,29 +520,43 @@ if golden {
 }
 ```
 
-`Expire`'s tombstones are correctly *applied* to the encoder's own tracker
-(so the encoder's own bookkeeping stays consistent) but are silently
-**never put on the wire** whenever that same window happens to be a golden
-keyframe: `FullDict()` is an unconditional replacement of `dictDeltas`, not
-an addition to it, and a Full re-announcement only ever contains *adds*
-(birth-style entries) for currently-active IDs — it has no way to tell a
+`Expire`'s tombstones were correctly *applied* to the encoder's own tracker
+(so the encoder's own bookkeeping stayed consistent) but were silently
+**never put on the wire** whenever that same window happened to be a golden
+keyframe: `FullDict()` was an unconditional replacement of `dictDeltas`, not
+an addition to it, and a Full re-announcement only ever contained *adds*
+(birth-style entries) for currently-active IDs — it had no way to tell a
 decoder to *remove* an ID that expired in that same call. A decoder that
-already held that ID keeps it forever: the encoder never re-tombstones an
-ID it has already expired once. Unlike a dropped birth (which the *next*
+already held that ID kept it forever: the encoder never re-tombstones an ID
+it has already expired once. Unlike a dropped birth (which the *next*
 golden's full-dict resync repairs, per Condition 2 above), a lost tombstone
-is a **permanent** divergence, not a bounded one — over a realistic 1h run
+was a **permanent** divergence, not a bounded one — over a realistic 1h run
 with tombstones firing every ~10-15 windows against a 60-window golden
-cycle, a same-window collision is close to inevitable, which is exactly
-what all three Condition 1 runs hit.
+cycle, a same-window collision was close to inevitable, which was exactly
+what all three original Condition 1 runs hit.
 
-This is a real defect and materially strengthens the case against
-`CLOSED-NOT-NEEDED`, but it is an *implementation* bug (a golden keyframe
-should carry that window's tombstones alongside `FullDict()`'s adds, not
-instead of them) — fixable without any wire-format change, since
-`dict_delta` entries already support mixed birth/tombstone lists in any
-frame. Per this prompt's guardrails ("no protocol changes... discovered
-defects become a v3 proposal appendix, not silent edits"), it is not fixed
-here; see `docs/rfc/palimpsest-wire-v2.md`'s "v3 proposal appendix (informative)".
+**Fix (v2-compatible, no wire-format change).** A golden keyframe now
+carries that window's tombstones alongside `FullDict()`'s adds, not instead
+of them, via `pkg/wire.BuildKeyframe`'s golden path (`FullDict()` adds ++
+that window's `Expire()` tombstones). The wire format was already legal for
+this: `dict_delta` entries support mixed birth/tombstone lists in any frame
+type. As defense in depth against any other cause of dictionary drift, a
+golden keyframe's `DictDeltas` are also authoritative-replace for the
+decoder's per-emitter dictionary mirror (`internal/core/engine.go`'s
+`reconcileGoldenDict`): any ID in the per-emitter mirror that is absent from
+the golden's announced set is treated as an implicit tombstone, and the
+ownership chain (`view.releaseOwner`) proceeds exactly as an explicit
+tombstone would. See
+`docs/adr/ADR-008-ephemeral-cardinality.md`'s "Amendment: golden
+reconciliation and union-dictionary ownership" and the RFC's Errata entry
+(`docs/rfc/palimpsest-wire-v2.md` §11). The Condition 1 re-run (numbers in
+the table above) confirms `dict_root_mismatches=0` and
+`degraded_at_end=false` at all three churn rates.
+
+Note: the byte counts in the table above differ slightly from the original
+measurement because the fix adds tombstone `dict_delta` entries to golden
+keyframe wire bytes. The fractions are materially unchanged and all three
+still clear the 10% threshold by a wide margin.
 
 ### Decision
 

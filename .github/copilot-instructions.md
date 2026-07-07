@@ -1,6 +1,19 @@
 # Palimpsest — standing instructions for Copilot
 - Read docs/SPEC.md, docs/COSTS.md, docs/SECURITY.md and docs/adr/*.md
   before writing any code. They win over your instincts.
+- The ADR text actually committed in docs/adr/*.md is authoritative — full
+  stop. A prompt draft, a prior conversation's summary, or your own memory
+  of what an ADR "must have said" is not a source of truth, even when it
+  sounds plausible or was true of an earlier draft. If a prompt describes
+  behavior as "the existing ADR-NNN semantics" or "clarifying existing
+  intent," verify that claim against the actual file before writing code
+  or docs against it; if the file doesn't say it, the prompt is proposing
+  something new and should be implemented (and written up) as an
+  explicitly-labeled amendment, not folded into the original Decision text
+  as if it were always there. Spec drift during transcription — a draft's
+  intent diverging from what actually landed in the repo — is a documented
+  failure mode here (ADR-008's Ownership & Eviction amendment exists
+  because of it), not a hypothetical.
 - Core modules (pkg/*) allow exactly ONE external dep:
   github.com/cespare/xxhash/v2. Everything else is stdlib. The otel/ module
   is the only place collector deps live.
