@@ -113,3 +113,45 @@ func TestMetrics_SnapshotAndPublish(t *testing.T) {
 	m2 := New()
 	m2.Publish("palimpsest_metrics_test_b")
 }
+
+// TestMetrics_EvidenceGate covers the ADR-017 dict_root Merkle/resync
+// evidence-gate metrics: per-shard wire-byte accounting, mismatch counting,
+// and heal-time avg/max.
+func TestMetrics_EvidenceGate(t *testing.T) {
+	m := New()
+
+	m.AddWireBytes(1, 2077)
+	m.AddWireBytes(1, 600004)
+	m.AddFullDictKeyframeBytes(1, 600004)
+	if got, want := m.WireBytesTotal(1), int64(2077+600004); got != want {
+		t.Fatalf("WireBytesTotal(1) = %d, want %d", got, want)
+	}
+	if got, want := m.FullDictKeyframeBytes(1), int64(600004); got != want {
+		t.Fatalf("FullDictKeyframeBytes(1) = %d, want %d", got, want)
+	}
+	if got := m.WireBytesTotal(999); got != 0 {
+		t.Fatalf("WireBytesTotal(unseen shard) = %d, want 0", got)
+	}
+
+	m.IncDictRootMismatches(1)
+	m.IncDictRootMismatches(1)
+	if got := m.DictRootMismatches(1); got != 2 {
+		t.Fatalf("DictRootMismatches(1) = %d, want 2", got)
+	}
+
+	m.ObserveDictRootHealSeconds(1, 100*time.Second)
+	m.ObserveDictRootHealSeconds(1, 500*time.Second)
+	if got, want := m.DictRootHealSecondsAvg(1), 300*time.Second; got != want {
+		t.Fatalf("DictRootHealSecondsAvg(1) = %v, want %v", got, want)
+	}
+	if got, want := m.DictRootHealSecondsMax(1), 500*time.Second; got != want {
+		t.Fatalf("DictRootHealSecondsMax(1) = %v, want %v (worst case, not last-write)", got, want)
+	}
+
+	snap := m.Snapshot()
+	if snap["wire_bytes_total"] == nil || snap["full_dict_keyframe_bytes"] == nil ||
+		snap["dict_root_mismatches"] == nil || snap["dict_root_heal_avg_ns"] == nil ||
+		snap["dict_root_heal_max_ns"] == nil {
+		t.Fatalf("Snapshot() missing an evidence-gate key: %+v", snap)
+	}
+}

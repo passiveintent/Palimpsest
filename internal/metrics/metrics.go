@@ -52,6 +52,16 @@ func (l *labeled) set(key string, v int64) {
 	l.mu.Unlock()
 }
 
+// setMax updates key to v only if v is greater than its current value,
+// giving a running maximum (used for worst-case, not cumulative, gauges).
+func (l *labeled) setMax(key string, v int64) {
+	l.mu.Lock()
+	if v > l.vals[key] {
+		l.vals[key] = v
+	}
+	l.mu.Unlock()
+}
+
 func (l *labeled) get(key string) int64 {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -95,6 +105,24 @@ type Metrics struct {
 
 	mergedWindows *labeled // key: trust ("proven"|"unproven"|"na") -> count (ADR-015)
 
+	// wireBytesTotal/fullDictKeyframeBytes back the ADR-008 dict_root
+	// Merkle/resync evidence gate (docs/adr/ADR-017-merkle-decision.md): the
+	// fraction of a shard's wire bytes spent on golden (Full, non-KDELTA)
+	// keyframes, which is what a Merkle root + resync channel would need to
+	// beat to be worth building.
+	wireBytesTotal        *labeled // key: shard -> cumulative bytes
+	fullDictKeyframeBytes *labeled // key: shard -> cumulative bytes (golden keyframes only)
+
+	// dictRootMismatches/dictRootHeal* back the same evidence gate's second
+	// condition: how often a decoder's dict_root diverges from the encoder's
+	// (VerifyKeyframe failure, internal/core/engine.go's handleKeyframe) and
+	// how long it takes to heal (mismatch detected -> next verified golden
+	// keyframe).
+	dictRootMismatches  *labeled // key: shard -> count
+	dictRootHealSeconds *labeled // key: shard -> cumulative nanoseconds
+	dictRootHealCount   *labeled // key: shard -> count, for average
+	dictRootHealMaxNs   *labeled // key: shard -> worst observed heal duration (ns)
+
 	scalarMu    sync.Mutex // guards the plain int64 scalar fields above
 	publishOnce sync.Once
 }
@@ -109,6 +137,12 @@ func New() *Metrics {
 		snapshotsLatencySeconds: newLabeled(),
 		clockSkewMs:             newLabeled(),
 		mergedWindows:           newLabeled(),
+		wireBytesTotal:          newLabeled(),
+		fullDictKeyframeBytes:   newLabeled(),
+		dictRootMismatches:      newLabeled(),
+		dictRootHealSeconds:     newLabeled(),
+		dictRootHealCount:       newLabeled(),
+		dictRootHealMaxNs:       newLabeled(),
 	}
 }
 
@@ -262,6 +296,62 @@ func (m *Metrics) MergedWindows(trust string) int64 {
 	return m.mergedWindows.get(trust)
 }
 
+func shardKey(shardID uint64) string { return strconv.FormatUint(shardID, 10) }
+
+// AddWireBytes records n more encoded wire bytes (any frame type) processed
+// for shardID (ADR-017 evidence gate's denominator: total wire bytes).
+func (m *Metrics) AddWireBytes(shardID uint64, n int64) {
+	m.wireBytesTotal.add(shardKey(shardID), n)
+}
+func (m *Metrics) WireBytesTotal(shardID uint64) int64 {
+	return m.wireBytesTotal.get(shardKey(shardID))
+}
+
+// AddFullDictKeyframeBytes records n more encoded wire bytes attributable to
+// a golden (Full, non-KDELTA) KEYFRAME for shardID (ADR-017 evidence gate's
+// numerator: the byte cost the current full-dict-re-announcement design
+// pays every golden cadence, which a Merkle root + resync channel would aim
+// to shrink).
+func (m *Metrics) AddFullDictKeyframeBytes(shardID uint64, n int64) {
+	m.fullDictKeyframeBytes.add(shardKey(shardID), n)
+}
+func (m *Metrics) FullDictKeyframeBytes(shardID uint64) int64 {
+	return m.fullDictKeyframeBytes.get(shardKey(shardID))
+}
+
+// IncDictRootMismatches records one newly-detected dict_root divergence
+// (recover.Dictionary.VerifyKeyframe returning false) for shardID. Callers
+// (handleKeyframe) only call this once per mismatch episode, not once per
+// still-degraded frame — see ObserveDictRootHealSeconds for the matching
+// heal-side observation.
+func (m *Metrics) IncDictRootMismatches(shardID uint64) {
+	m.dictRootMismatches.add(shardKey(shardID), 1)
+}
+func (m *Metrics) DictRootMismatches(shardID uint64) int64 {
+	return m.dictRootMismatches.get(shardKey(shardID))
+}
+
+// ObserveDictRootHealSeconds records one mismatch episode's time-to-heal for
+// shardID: the wall-clock gap between a dict_root mismatch being detected
+// and the next verified golden keyframe healing it (ADR-017 evidence gate).
+func (m *Metrics) ObserveDictRootHealSeconds(shardID uint64, d time.Duration) {
+	key := shardKey(shardID)
+	m.dictRootHealSeconds.add(key, d.Nanoseconds())
+	m.dictRootHealCount.add(key, 1)
+	m.dictRootHealMaxNs.setMax(key, d.Nanoseconds())
+}
+func (m *Metrics) DictRootHealSecondsAvg(shardID uint64) time.Duration {
+	key := shardKey(shardID)
+	n := m.dictRootHealCount.get(key)
+	if n == 0 {
+		return 0
+	}
+	return time.Duration(m.dictRootHealSeconds.get(key) / n)
+}
+func (m *Metrics) DictRootHealSecondsMax(shardID uint64) time.Duration {
+	return time.Duration(m.dictRootHealMaxNs.get(shardKey(shardID)))
+}
+
 // Publish registers m's counters under expvar at the given top-level name
 // (e.g. "palimpsest"). Safe to call more than once; only the first call
 // takes effect, matching expvar.Publish's "panics if name already
@@ -293,6 +383,11 @@ func (m *Metrics) Snapshot() map[string]any {
 		"keyring_miss":             m.KeyringMisses(),
 		"unregistered_codec":       m.UnregisteredCodec(),
 		"merged_windows":           m.mergedWindows.snapshot(),
+		"wire_bytes_total":         m.wireBytesTotal.snapshot(),
+		"full_dict_keyframe_bytes": m.fullDictKeyframeBytes.snapshot(),
+		"dict_root_mismatches":     m.dictRootMismatches.snapshot(),
+		"dict_root_heal_avg_ns":    m.avgMapNs(m.dictRootHealSeconds, m.dictRootHealCount),
+		"dict_root_heal_max_ns":    m.dictRootHealMaxNs.snapshot(),
 	}
 }
 

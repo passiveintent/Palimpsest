@@ -157,6 +157,19 @@ Said plainly, because the alternative is someone finding out the hard way:
   are the record — there is no "go back and look at every pod from last
   Tuesday." See ADR-008/ADR-009 and `docs/SPEC.md`.
 
+## Protocol
+
+The wire frame format — frame layout, hashing/seed derivation, dict
+lifecycle, temporal semantics, security considerations, and the codec/
+frame-type/predictor registries — is specified independently of this
+implementation in [docs/rfc/palimpsest-wire-v2.md](docs/rfc/palimpsest-wire-v2.md).
+v2 is current and encoder-mandatory; v1 is read-only legacy. Conformance
+covers the byte-exact vector classes only (wire framing, hashing,
+`dict_root`, HKDF, KDELTA — see [testdata/golden/](testdata/golden/) and
+[oracle/](oracle/)); sparse-recovery vectors are informative, not
+conformance-required, since recovery is an implementation choice behind the
+wire contract, not part of the protocol itself.
+
 ## Cost model
 
 See [docs/COSTS.md](docs/COSTS.md) for the full decomposition and the

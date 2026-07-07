@@ -242,6 +242,13 @@ type ViewState struct {
 
 	Degraded       bool
 	breakerAlerted bool
+
+	// DictMismatchSince is the wall-clock time a dict_root mismatch was
+	// first detected (VerifyKeyframe returning false) and not yet healed by
+	// a subsequent verified golden keyframe; the zero value means no
+	// mismatch is currently outstanding. Backs the ADR-017 evidence gate's
+	// time-to-heal metric (see handleKeyframe).
+	DictMismatchSince time.Time
 }
 
 // WindowState accumulates one window's (Frame.Seq's) merged sketch across
@@ -287,6 +294,16 @@ func (w *WindowState) merge(emitterID uint64, y []float64) {
 func (e *Engine) HandleFrame(ctx context.Context, f *wire.Frame) {
 	now := e.now()
 	e.metrics.IncFramesTotal(frameTypeLabel(f.FrameType), f.EmitterID, f.ShardID)
+
+	// ADR-017 evidence gate: every frame's exact wire size, and (for golden
+	// keyframes specifically) the same size again under the full-dict
+	// numerator — EncodedSize avoids paying Marshal's allocation/CRC cost
+	// just to measure a byte count.
+	wireBytes := int64(wire.EncodedSize(f))
+	e.metrics.AddWireBytes(f.ShardID, wireBytes)
+	if f.FrameType == wire.FrameTypeKeyframe && f.Flags&wire.FlagKDelta == 0 {
+		e.metrics.AddFullDictKeyframeBytes(f.ShardID, wireBytes)
+	}
 
 	shard := e.getOrCreateShard(f.ShardID)
 
@@ -389,6 +406,14 @@ func (e *Engine) handleKeyframe(ctx context.Context, shard *ShardState, evs *emi
 	}
 
 	if !evs.dict.VerifyKeyframe(f.DictRoot) {
+		// ADR-017 evidence gate: count only the first frame of a mismatch
+		// episode (view.DictMismatchSince stays set for every subsequent
+		// still-mismatched keyframe until a golden heals it), so
+		// dict_root_mismatches counts episodes, not every degraded frame.
+		if view.DictMismatchSince.IsZero() {
+			view.DictMismatchSince = now
+			e.metrics.IncDictRootMismatches(f.ShardID)
+		}
 		e.setDegraded(view, true)
 		return
 	}
@@ -397,6 +422,10 @@ func (e *Engine) handleKeyframe(ctx context.Context, shard *ShardState, evs *emi
 		// Heal only on a verified GOLDEN (Full) keyframe: a matching
 		// KDELTA doesn't prove the encoder and decoder's full active-ID
 		// sets ever agreed on more than the small delta just decoded.
+		if !view.DictMismatchSince.IsZero() {
+			e.metrics.ObserveDictRootHealSeconds(f.ShardID, now.Sub(view.DictMismatchSince))
+			view.DictMismatchSince = time.Time{}
+		}
 		e.setDegraded(view, false)
 	}
 

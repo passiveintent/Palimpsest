@@ -405,3 +405,114 @@ spike, since each one carries a single flagged series' bounded ring-buffer
 window (`--ring-window`, default 15 min, but only the samples actually
 pushed since construction — these short test runs, not 15 minutes of
 history), not the whole fleet's instance detail.
+
+## Merkle dict_root / resync evidence gate (Prompt 16 Part A, ADR-017)
+
+`docs/adr/ADR-017-merkle-decision.md`'s backlog item ("build a true Merkle
+dict root + bidirectional resync channel instead of the current flat
+`xxh64(sorted ids)` digest + full-dict-on-golden-keyframe resync,
+ADR-008/`pkg/wire/dictroot.go`") is evaluated against two measured
+conditions. Metrics added for this measurement:
+`Metrics.{AddWireBytes,AddFullDictKeyframeBytes,IncDictRootMismatches,
+ObserveDictRootHealSeconds}` (`internal/metrics/metrics.go`), wired into
+`internal/core/engine.go`'s `HandleFrame`/`handleKeyframe`; byte counts come
+from `wire.EncodedSize` (`pkg/wire/size.go`), a Marshal-equivalent length
+computed without paying Marshal's allocation/CRC cost per frame.
+
+### Condition 1: full-dict-keyframe bytes vs total wire bytes
+
+Measured by `internal/core.TestDictRootEvidenceGateMeasurement`: the real
+encode path (`pkg/sketch`, `pkg/wire`, via `internal/core`'s `testEncoder`,
+which mirrors `cmd/plsim/encoder.go` field-for-field) and the real decode
+path (`internal/core.Engine`) driven through `cmd/plsim/world.go`'s own
+churn formula (`perWindow = (churnPerMinute/2)/60*intervalSeconds`) at
+`--churn-rate {10,60,300}/min`, for a 1h-equivalent run: 360 windows at a
+realistic 10s flush interval (plsim's own `--interval` default), 300 initial
+logical series (same scale as the "Metadata overhead" section above),
+`m=2000 d=6 bits=8` and `keyframe-every=6 golden-every=10` (plsim/demo
+defaults — golden every 60 windows, 6 goldens per run), lossless delivery
+(no dropped/duplicated/reordered frames):
+
+| churn (events/min) | total wire bytes | full-dict-keyframe bytes | fraction | logical series (end) |
+| --- | --- | --- | --- | --- |
+| 10 | 1,070,478 | 371,982 | **34.7%** | 599 |
+| 60 | 1,428,302 | 406,492 | **28.5%** | 2,100 |
+| 300 | 3,140,062 | 568,892 | **18.1%** | 9,300 |
+
+All three clear the decision rule's 10% threshold, at every tested churn
+rate — including the *lowest*. The fraction falls as churn rises because
+the denominator (steady per-window `dict_delta` churn traffic, already
+documented above as up to ~36% of bytes on its own) grows faster than the
+numerator (six golden keyframes' bytes, which grow only mildly with
+cardinality drift): the golden-keyframe tax is largest, relatively, exactly
+when a fleet is quiet — which is most of the time.
+
+### Condition 2: time-to-heal (mismatch -> verified root)
+
+Lossless delivery does not exercise the heal path by itself (a genuinely
+clean run never mismatches — see the Discovered defect note below for why
+these particular runs did anyway), so
+`internal/core.TestDictRootHealTimeMeasurement` isolates it directly: one
+dict_delta-bearing frame is deliberately dropped shortly after the run's
+opening golden keyframe (simulating one lost delivery), with `series_ttl`
+set long enough that no tombstone fires during the run — isolating the
+mechanism's designed behavior from the defect below.
+
+```
+keyframe_every=6 golden_every=10 (golden cycle = 600s at a 10s interval)
+dropped at window 3; dict_root_mismatches=1; heal_max=9m0s; healed=true
+```
+
+9 minutes is comfortably under the decision rule's 2x golden-cycle
+threshold (20 minutes) — *when the mechanism works as designed*. It is
+independent of churn rate: healing is gated purely on the next golden
+keyframe, not on how much churn happened in between.
+
+### Discovered defect (not fixed in this prompt; GUARDRAILS forbid protocol changes here)
+
+Running Condition 1's lossless scenario surfaced a real bug, not a
+contrived one: at all three tested churn rates, `dict_root_mismatches` came
+back **1**, and the shard was still DEGRADED at the end of the run — despite
+no frame ever being dropped. Root cause: `cmd/plsim/encoder.go`,
+`otel/processor/csresidual/processor.go`, and `internal/core`'s test mirror
+all share this pattern on a golden keyframe window:
+
+```go
+tombstones := tracker.Expire(now, seriesTTL)   // mutates tracker.active NOW
+...
+if golden {
+    f.DictDeltas = tracker.FullDict()          // replaces dictDeltas wholesale
+} else {
+    f.DictDeltas = dictDeltas                  // births ++ tombstones
+}
+```
+
+`Expire`'s tombstones are correctly *applied* to the encoder's own tracker
+(so the encoder's own bookkeeping stays consistent) but are silently
+**never put on the wire** whenever that same window happens to be a golden
+keyframe: `FullDict()` is an unconditional replacement of `dictDeltas`, not
+an addition to it, and a Full re-announcement only ever contains *adds*
+(birth-style entries) for currently-active IDs — it has no way to tell a
+decoder to *remove* an ID that expired in that same call. A decoder that
+already held that ID keeps it forever: the encoder never re-tombstones an
+ID it has already expired once. Unlike a dropped birth (which the *next*
+golden's full-dict resync repairs, per Condition 2 above), a lost tombstone
+is a **permanent** divergence, not a bounded one — over a realistic 1h run
+with tombstones firing every ~10-15 windows against a 60-window golden
+cycle, a same-window collision is close to inevitable, which is exactly
+what all three Condition 1 runs hit.
+
+This is a real defect and materially strengthens the case against
+`CLOSED-NOT-NEEDED`, but it is an *implementation* bug (a golden keyframe
+should carry that window's tombstones alongside `FullDict()`'s adds, not
+instead of them) — fixable without any wire-format change, since
+`dict_delta` entries already support mixed birth/tombstone lists in any
+frame. Per this prompt's guardrails ("no protocol changes... discovered
+defects become a v3 proposal appendix, not silent edits"), it is not fixed
+here; see `docs/rfc/palimpsest-wire-v2.md`'s "v3 proposal appendix (informative)".
+
+### Decision
+
+See `docs/adr/ADR-017-merkle-decision.md`: Condition 1 alone clears the
+threshold at every tested churn rate, so the backlog item is **not**
+closed.
