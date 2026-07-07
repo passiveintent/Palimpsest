@@ -1,6 +1,6 @@
 # ADR-015: Merged Tier — Trust Policy for Cross-Emitter Fusion
 
-**Status:** Accepted (implementation in progress)
+**Status:** Accepted (implemented)
 
 ## Context
 

@@ -1,6 +1,6 @@
 # ADR-016: Kafka Transport
 
-**Status:** Accepted (implementation in progress)
+**Status:** Accepted (implemented)
 
 ## Problem
 

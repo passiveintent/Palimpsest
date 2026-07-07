@@ -10,12 +10,7 @@
 // as the request body. This is the one adapter that opts into a listening
 // socket (a FrameSource has to receive pushes somehow); every other
 // palimpsestd component stays socket-free by default.
-/*
- * Copyright (c) 2026 Purushottam <purushottam@passiveintent.dev>
- *
- * This source code is licensed under the AGPL-3.0-only license found in the
- * LICENSE file in the root directory of this source tree.
- */
+
 
 package httpsrc
 
