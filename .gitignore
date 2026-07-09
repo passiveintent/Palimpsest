@@ -36,3 +36,5 @@ demo/frames/
 demo/out/
 demo/truth/
 demo/dist/
+
+.gocache

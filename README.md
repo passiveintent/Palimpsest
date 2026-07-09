@@ -235,5 +235,12 @@ numbers from this repo's own test suite.
 
 ## License
 
-Palimpsest is licensed under the GNU Affero General Public License,
-version 3 only (`AGPL-3.0-only`). See [LICENSE](LICENSE).
+Palimpsest is source-available under the Business Source License 1.1
+(`BUSL-1.1`). Non-production use is allowed under the license. Production use,
+including internal production use, paid products, hosted or managed services,
+resale, sublicensing, and revenue-generating use, requires a separate
+commercial license from the copyright holder.
+
+Each BUSL-licensed version converts to the GNU Affero General Public License,
+version 3 only (`AGPL-3.0-only`), on its Change Date. For this version, the
+Change Date is 2030-07-09. See [LICENSE](LICENSE).

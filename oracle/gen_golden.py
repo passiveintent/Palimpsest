@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Purushottam <purushottam@passiveintent.dev>
 #
-# This source code is licensed under the AGPL-3.0-only license found in the
+# This source code is licensed under the BUSL-1.1 license found in the
 # LICENSE file in the root directory of this source tree.
 
 """Generates testdata/golden/* from palimpsest_ref.py (docs/SPEC.md, ADR-008
