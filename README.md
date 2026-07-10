@@ -249,3 +249,6 @@ forward on a schedule while the project is under active development (see
 [LICENSE](LICENSE) for the current date, and
 [.github/workflows/license-rolling-window.yml](.github/workflows/license-rolling-window.yml)
 for the mechanism) rather than being fixed at a single date in this README.
+
+"Palimpsest" is a trademark claim independent of the code license — see
+[TRADEMARKS.md](TRADEMARKS.md).

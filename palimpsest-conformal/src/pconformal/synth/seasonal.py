@@ -1,3 +1,9 @@
+# Copyright (c) 2026 Purushottam <purushottam@passiveintent.dev>
+# SPDX-License-Identifier: BUSL-1.1
+#
+# This source code is licensed under the BUSL-1.1 license found in the
+# LICENSE file in the root directory of this source tree.
+
 """seasonal_latency: a Holt-Winters-recoverable seasonal series of window stats.
 
 ADR-002's Forecaster is Holt-Winters-class; ADR-003's Mondrian strata exist
