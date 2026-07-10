@@ -239,8 +239,13 @@ Palimpsest is source-available under the Business Source License 1.1
 (`BUSL-1.1`). Non-production use is allowed under the license. Production use,
 including internal production use, paid products, hosted or managed services,
 resale, sublicensing, and revenue-generating use, requires a separate
-commercial license from the copyright holder.
+commercial license from the copyright holder — see
+[COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md) for what that covers and how
+to get one.
 
 Each BUSL-licensed version converts to the GNU Affero General Public License,
-version 3 only (`AGPL-3.0-only`), on its Change Date. For this version, the
-Change Date is 2030-07-09. See [LICENSE](LICENSE).
+version 3 only (`AGPL-3.0-only`), on its Change Date. The Change Date rolls
+forward on a schedule while the project is under active development (see
+[LICENSE](LICENSE) for the current date, and
+[.github/workflows/license-rolling-window.yml](.github/workflows/license-rolling-window.yml)
+for the mechanism) rather than being fixed at a single date in this README.

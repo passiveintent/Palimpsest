@@ -1,0 +1,34 @@
+name: license-rolling-window
+
+# Keeps the BUSL-1.1 Change Date in LICENSE a fixed window ahead of "today"
+# (see scripts/bump-license-date.sh) so it doesn't lapse while the repo is
+# still under active development. Runs monthly and can be triggered manually.
+
+on:
+  schedule:
+    - cron: "0 6 1 * *" # 06:00 UTC on the 1st of every month
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  bump-change-date:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bump BUSL Change Date
+        id: bump
+        run: bash scripts/bump-license-date.sh
+        env:
+          LICENSE_WINDOW_YEARS: "4"
+
+      - name: Commit and push
+        if: steps.bump.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add LICENSE
+          git commit -m "chore(license): roll BUSL Change Date forward"
+          git push

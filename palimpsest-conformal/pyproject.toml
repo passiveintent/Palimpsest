@@ -1,0 +1,52 @@
+[project]
+name = "palimpsest-conformal"
+version = "0.1.0"
+description = "Calibrated statistical alerting engine extending Palimpsest: conformalized quantile regression + DtACI adaptive bands, EVT tail, Sliced-Wasserstein drift-triggered recalibration."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.12",
+    "statsmodels>=0.14",
+    "polars>=0.20",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "hypothesis>=6.100",
+    "ruff>=0.6",
+    "mypy>=1.10",
+    "matplotlib>=3.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pconformal"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers"
+markers = [
+    "gate: statistical acceptance gates G1-G8 (docs/GATES.md); run explicitly via -m gate",
+]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "N"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["pconformal"]
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = "matplotlib.*"
+ignore_missing_imports = true

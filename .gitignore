@@ -38,3 +38,8 @@ demo/truth/
 demo/dist/
 
 .gocache
+
+# palimpsest-conformal: synth fixture plots are regenerated from seeded
+# generators for local eyeballing, not golden images (matplotlib PNG output
+# isn't guaranteed byte-identical across environments/versions).
+palimpsest-conformal/docs/fixtures/*.png

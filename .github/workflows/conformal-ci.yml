@@ -1,0 +1,59 @@
+name: conformal-ci
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "palimpsest-conformal/**"
+      - ".github/workflows/conformal-ci.yml"
+  pull_request:
+    paths:
+      - "palimpsest-conformal/**"
+      - ".github/workflows/conformal-ci.yml"
+
+defaults:
+  run:
+    working-directory: palimpsest-conformal
+
+jobs:
+  lint-typecheck-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: palimpsest-conformal/uv.lock
+
+      - name: uv sync
+        run: uv sync --all-extras --dev
+
+      - name: ruff
+        run: uv run ruff check .
+
+      - name: mypy --strict
+        run: uv run mypy .
+
+      - name: pytest (excludes gate-marked statistical acceptance tests)
+        run: uv run pytest -m "not gate"
+
+  gate:
+    runs-on: ubuntu-latest
+    needs: lint-typecheck-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: palimpsest-conformal/uv.lock
+
+      - name: uv sync
+        run: uv sync --all-extras --dev
+
+      - name: pytest -m gate
+        # G1-G8 (docs/GATES.md) are collected as skip-stubs until each is
+        # implemented, so this fails on any error/failure, not just an
+        # empty collection.
+        run: uv run pytest -m gate
