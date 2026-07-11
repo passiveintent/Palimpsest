@@ -34,6 +34,7 @@ def test_coverage_under_decay_is_tracked_and_stays_bounded() -> None:
                 alpha=_ALPHA,
                 decay=decay,
                 n_buckets=8,
+                protocol="frozen",  # decay effect, not protocol; frozen is the fast path
             )
             covered += cov.covered
             n_test += cov.n_test

@@ -44,49 +44,100 @@ uv run pytest -m gate
 
 ---
 
-## G1 — Coverage
+## The layered coverage guarantee (G1 + G1b)
 
-**Claim (asymmetric, honest).** Split conformal is a two-sided theorem, not a
-one-sided one: under exchangeability, `1 - alpha <= coverage <= 1 - alpha +
-1/(n_cal + 1)`. Run *honestly out-of-sample* (forecaster fit only on a
-training prefix; calibration and evaluation windows are strictly out-of-sample
-forecasts — no in-sample leakage), coverage sits AT nominal, not comfortably
-above it. So the claim is the asymmetric pair: not systematically under
-nominal (the dangerous direction), and not wastefully far above it. This must
-hold marginally AND independently within every Mondrian stratum (ADR-003) —
-a stratum that under-covers can hide behind a healthy marginal average.
+The product claim — "calibrated, self-adjusting, bounded false-alarm rate" —
+is a *layered* guarantee, and G1 and G1b carry the two layers:
 
-**Fixture.** Synthetic score-generating process with a known noise model;
-paired seeds. Per-seed coverage is the unit of analysis (not each window):
-pooling all windows into one binomial CI gives a ~+/-0.003 band that ignores
-heavy within-seed autocorrelation and would flag noise as failure.
+- **Finite-sample, under exchangeability (G1).** Given exchangeable
+  calibration/evaluation scores, split conformal delivers `coverage >= 1 -
+  alpha`. G1 asserts the fixed-alpha wrapper never under-covers.
+- **Long-run, under adaptation, regardless (G1b).** When exchangeability is
+  broken (forecast-quality drift, horizon growth), the adaptive layer
+  (ACI/DtACI) bounds long-run miscoverage anyway, by a deterministic
+  Gibbs & Candes bound. **G1b, not G1, carries the product claim.**
 
-**Procedure.** For each seed, run the out-of-sample forecaster -> studentized
-CQR score -> split-conformal pipeline and record the coverage rate on the
-evaluation windows. Treat the per-seed rates as the sample; form the mean's
-two-sided t-interval. Bounds are theory-derived: `eps_sketch` is the DDSketch
-discretization plus the `(1+gamma)` conservative radius inflation, from the
-sketch's own relative accuracy — no hand-set constants.
+In-repo GATES.md is canonical; the build-playbook's original single-sided G1
+text is superseded by this pair.
 
-**Pass (marginal).** Nominal `1 - alpha` falls inside the per-seed coverage
-t-interval (catches systematic under-coverage such as 0.885), AND the mean
-does not exceed `1 - alpha + 1/(n_cal + 1) + eps_sketch` (catches band-width
-waste). Per-stratum: the same, independently, for every stratum (ADR-003).
+## G1 — Coverage (finite-sample layer)
 
-**Fail.** The t-interval excludes `1 - alpha` (significant under- or
-over-coverage), the mean exceeds the theory upper bound (width waste), or any
-single stratum fails — a marginal-only check is not sufficient.
+**Claim (one-sided, honest, zero constants).** The band never *under-covers*:
+`coverage >= 1 - alpha`. Split conformal is meant to over-cover slightly, so
+the gate must not reject that legitimate conservatism — it fails ONLY on
+statistically detectable under-coverage. This must hold marginally AND
+independently within every Mondrian stratum (ADR-003) — a stratum that
+under-covers can hide behind a healthy marginal average.
 
-**Note (honest caveat).** Once leakage is removed, fixed-alpha split conformal
-on this fixture does NOT robustly over-cover; coverage is horizon-sensitive
-and sits at nominal within per-seed noise. Guaranteeing coverage strictly
-`>= 1 - alpha` out-of-sample under forecast-quality drift is the adaptive
-layer's job (ACI/DtACI, G3/G4), not fixed-alpha split conformal's.
+**Fixture.** `seasonal_latency`, paired seeds. Per-seed coverage is the unit
+of analysis (not each window): pooling all windows into one binomial CI gives
+a ~+/-0.003 band that ignores heavy within-seed autocorrelation.
+
+**Procedure.** For each seed: fit the forecaster HONESTLY out-of-sample
+(rolling-origin, periodic refit, short bounded horizon — no leakage), compute
+studentized CQR scores, split them EXCHANGEABLY (seeded random cal/eval split
+so the wrapper's coverage property is isolated for any forecaster, seasonal
+scores included), calibrate, and record the evaluation coverage rate. Form the
+one-sided upper confidence bound of the mean per-seed rate.
+
+**Pass (marginal).** The one-sided upper confidence bound of mean per-seed
+coverage is `>= 1 - alpha`. This passes at nominal, passes legitimate
+conservatism, and its power to detect under-coverage tightens automatically as
+seed count grows. Per-stratum: the same, independently, for every stratum.
+
+**Fail.** Even the upper confidence bound sits below `1 - alpha` (we are
+statistically confident of under-coverage), or any single stratum fails.
+
+**Band-width waste** is caught by G2's *relative* width comparison (Holt-
+Winters must be `>= 20%` narrower than the zero-skill control), NOT an absolute
+coverage ceiling — such a ceiling would conflict with the legitimate
+conservatism this one-sided gate deliberately permits.
 
 **Relates to.** ADR-001 (core coverage promise), ADR-002 (CQR score
-coverage), ADR-003 (per-stratum coverage / provenance tiers).
+coverage), ADR-003 (per-stratum coverage / provenance tiers), G1b (the
+adaptive layer that carries the product claim).
 
 **Test location.** `tests/score/test_g1_coverage.py`.
+
+---
+
+## G1b — Adaptive-stack long-run coverage (the product claim)
+
+**Claim.** The full composed stack — rolling forecaster -> studentized CQR
+score -> split-conformal calibration -> DtACI adaptive miscoverage — holds
+long-run coverage within a *deterministic* bound REGARDLESS of exchangeability,
+including on the adversarial frozen-horizon protocol where a single multi-step
+extrapolation makes evaluation residuals stochastically dominate calibration's
+and fixed-alpha catastrophically under-covers. Surviving that is ACI's entire
+reason to exist.
+
+**Bound (Gibbs & Candes 2021, exact).** Telescoping the ACI recursion gives,
+for step size `gamma` over `T` windows, `|empirical_miscoverage - alpha| =
+|alpha_{T+1} - alpha_1| / (gamma * T) <= (max(alpha_1, 1 - alpha_1) + gamma) /
+(gamma * T)` (since `alpha_t` stays in `[-gamma, 1+gamma]`). Non-vacuous only
+for large `gamma`, so the gate uses the DtACI grid's fastest `gamma`.
+DEVIATION-CHECK: the clean bound assumes an UN-clipped single ACI; our
+`alpha_max` floor (invariant 2) and DtACI aggregation deviate from it, absorbed
+into a declared, flagged allowance — verify against the paper before shipping.
+
+**Fixture.** `seasonal_latency` (benign, rolling protocol) AND the frozen
+multi-step protocol (adversarial, non-exchangeable). Paired seeds.
+
+**Procedure.** Stream the evaluation scores through the DtACI-adaptive stack;
+compute long-run empirical miscoverage; compare to the bound on BOTH protocols.
+
+**Pass.** `|empirical_miscoverage - alpha|` within the bound (+ declared
+allowance) on both protocols, and — the control — strictly better than a
+non-adaptive fixed alpha on the adversarial one.
+
+**Fail.** The bound is exceeded on either protocol, or adaptation fails to beat
+fixed alpha under the adversarial shift.
+
+**Relates to.** ADR-002 (DtACI is the "I" of the PID framing), ADR-004
+(adaptation under drift), the DtACI regret gate (`tests/calibrate/
+test_dtaci_regret.py`), G3/G4 (the full drift stack, prompt 11).
+
+**Test location.** `tests/calibrate/test_g1b_adaptive_stack.py`.
 
 ---
 

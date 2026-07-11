@@ -24,7 +24,9 @@ from tests.calibrate._pipeline import STATISTICS, coverage_on_seasonal
 
 def test_pipeline_runs_per_statistic_affine_on_seasonal() -> None:
     rates = [
-        coverage_on_seasonal(0, HoltWintersForecaster, alpha=0.1, statistic=stat).rate
+        coverage_on_seasonal(
+            0, HoltWintersForecaster, alpha=0.1, statistic=stat, protocol="frozen"
+        ).rate
         for stat in STATISTICS
     ]
     # affine copies on this fixture => coverage is (near-)identical across stats.
