@@ -32,6 +32,16 @@ mature product eventually needs but v1 does not.
   adjustments from accumulated labels. Proposals are human-approved before
   application, rate-limited, and floored at `alpha_max` — the system can
   never propose its way to an alpha that under-covers past the floor.
+- **Incident masking rounds OUTWARD.** Confirmed-incident windows
+  (invariant 4) are window-granular, but calibration masking operates on the
+  time-bucketed ring at bucket granularity (ADR-004). When an incident does
+  not align to bucket boundaries, the mask MUST round outward: mask every
+  bucket that overlaps the incident at all. The two rounding directions are
+  not symmetric. Over-masking discards a little clean calibration data — the
+  band tightens marginally, the system fails noisy, the safe direction.
+  Under-masking readmits incident scores into calibration and widens the band
+  around a real incident — the fail-blind direction invariant 4 exists to
+  forbid. Outward is therefore the only permitted rounding.
 - **EVT is exempt from all of this.** EVT-zone violations page
   unconditionally; no rule, label, or alpha change can suppress them
   (invariant 3), including anything this flywheel produces.
@@ -70,3 +80,6 @@ mature product eventually needs but v1 does not.
   severity-tag correctness are ordinary falsifiable claims, not yet named
   gates — cover them in `tests/flywheel/` (log, labels, proposals) and
   `tests/connectors/` (webhook routing).
+- Outward incident-mask alignment (never under-mask) is an ordinary
+  falsifiable claim owned by the replay harness (`tests/replay/`, prompt 13),
+  where window→bucket alignment is actually performed.

@@ -54,6 +54,17 @@ maintenance signal — it is the thing we alert on.
   reversible (anneal-back, no deletion), and auditable (full ring-buffer
   history retained) — this is what invariant 5 requires and what makes a
   post-incident "why did the band move" review possible.
+- **Retention is a distinct policy from recalibration, and the ring is
+  sized to keep them from colliding** (amendment). Reweighting never deletes
+  data; the only thing that removes a bucket is the ring aging past its
+  fixed `capacity`. To keep that retention boundary from silently eating the
+  auditability promise, `BucketRing` enforces
+  `capacity >= calibration_horizon + audit_horizon` at construction (a loud
+  error, not a runtime surprise): the ring must always be large enough to
+  hold every bucket recalibration might reweight PLUS every bucket a
+  "what did the band look like before this changepoint" audit might query.
+  Spilling evicted buckets to cold storage for longer-horizon audits is a v2
+  note, not built now.
 - The cost of this separation is that a genuinely ambiguous case — where
   the operational cause of a real change happens to also be reflected in
   score drift — will not auto-recalibrate; it will alert instead. That is
@@ -63,6 +74,20 @@ maintenance signal — it is the thing we alert on.
   fingerprint corpus (ADR-008) is read-only with respect to this
   mechanism — it may narrate what drift/recalibration did, but it may
   never trigger or suppress it (invariant 7).
+- **Decay weighting formally lapses the finite-sample coverage guarantee —
+  by design, not by bug** (amendment). The exponential-decay weighted merge
+  is the operating mode of the ring, but under `decay < 1` the weights are
+  not likelihood ratios, so weighted-exchangeability theory does not apply
+  and split conformal's finite-sample `1 - alpha` guarantee formally lapses.
+  This is the architecture working as intended: the textbook guarantee holds
+  only at `decay = 1` (uniform weights), and maintaining *empirical* coverage
+  under decay-weighted, non-exchangeable calibration is precisely what the
+  DtACI/ACI adaptive-miscoverage layer (ADR-002's "I" term) exists to do. Two
+  consequences follow. (a) Every band's calibration provenance MUST carry the
+  `decay` in force, so a post-incident audit can distinguish a `decay = 1`
+  textbook-guaranteed band from a `decay < 1` adaptively-weighted one. (b) The
+  coverage cost of `decay < 1` is tracked (a non-gating test), separate from
+  the `decay = 1` coverage gate (G1), which remains the certified guarantee.
 
 ## Falsification hooks
 
