@@ -9,6 +9,7 @@ dependencies = [
     "scipy>=1.12",
     "statsmodels>=0.14",
     "polars>=0.20",
+    "ddsketch>=3.0.1,<4",
 ]
 
 [dependency-groups]
@@ -49,4 +50,12 @@ mypy_path = "src"
 
 [[tool.mypy.overrides]]
 module = "matplotlib.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "statsmodels.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "scipy.*"
 ignore_missing_imports = true

@@ -36,30 +36,52 @@ uv run pytest -m gate
   matching `tests/<module>/` directory, `pytest.skip`-ed with a pointer
   back to its section here. `pytest -m gate` therefore collects and skips
   (not errors on) all eight until each is implemented.
+- **One interim gate lives outside the G1-G8 taxonomy.** A DtACI regret gate
+  (`tests/calibrate/test_dtaci_regret.py`) validates the ensemble aggregation
+  against the best fixed-gamma expert on a score regime shift, ahead of the
+  full adaptive drift gates G3/G4 (prompt 11). It is `@pytest.mark.gate` so CI
+  runs it, but it is not one of the eight numbered acceptance gates.
 
 ---
 
 ## G1 — Coverage
 
-**Claim.** Empirical coverage matches nominal `1 - alpha` within sampling
-noise, both marginally and independently within every Mondrian stratum
-(ADR-003) — not just in aggregate, since a stratum that's under-covering
-can hide behind a marginal average that looks fine.
+**Claim (asymmetric, honest).** Split conformal is a two-sided theorem, not a
+one-sided one: under exchangeability, `1 - alpha <= coverage <= 1 - alpha +
+1/(n_cal + 1)`. Run *honestly out-of-sample* (forecaster fit only on a
+training prefix; calibration and evaluation windows are strictly out-of-sample
+forecasts — no in-sample leakage), coverage sits AT nominal, not comfortably
+above it. So the claim is the asymmetric pair: not systematically under
+nominal (the dangerous direction), and not wastefully far above it. This must
+hold marginally AND independently within every Mondrian stratum (ADR-003) —
+a stratum that under-covers can hide behind a healthy marginal average.
 
-**Fixture.** Synthetic score-generating process with a known noise model,
-run for enough windows per stratum that a binomial CI is informative;
-paired seeds.
+**Fixture.** Synthetic score-generating process with a known noise model;
+paired seeds. Per-seed coverage is the unit of analysis (not each window):
+pooling all windows into one binomial CI gives a ~+/-0.003 band that ignores
+heavy within-seed autocorrelation and would flag noise as failure.
 
-**Procedure.** Count band-violation events per stratum and overall over
-the fixture's run. Compute a binomial confidence interval (e.g.
-Clopper-Pearson) around the observed violation rate at a fixed confidence
-level.
+**Procedure.** For each seed, run the out-of-sample forecaster -> studentized
+CQR score -> split-conformal pipeline and record the coverage rate on the
+evaluation windows. Treat the per-seed rates as the sample; form the mean's
+two-sided t-interval. Bounds are theory-derived: `eps_sketch` is the DDSketch
+discretization plus the `(1+gamma)` conservative radius inflation, from the
+sketch's own relative accuracy — no hand-set constants.
 
-**Pass.** `1 - alpha` falls inside the CI, for the marginal rate AND for
-every individual stratum's rate.
+**Pass (marginal).** Nominal `1 - alpha` falls inside the per-seed coverage
+t-interval (catches systematic under-coverage such as 0.885), AND the mean
+does not exceed `1 - alpha + 1/(n_cal + 1) + eps_sketch` (catches band-width
+waste). Per-stratum: the same, independently, for every stratum (ADR-003).
 
-**Fail.** Any single stratum's CI excludes `1 - alpha` — a marginal-only
-check is not sufficient to pass this gate.
+**Fail.** The t-interval excludes `1 - alpha` (significant under- or
+over-coverage), the mean exceeds the theory upper bound (width waste), or any
+single stratum fails — a marginal-only check is not sufficient.
+
+**Note (honest caveat).** Once leakage is removed, fixed-alpha split conformal
+on this fixture does NOT robustly over-cover; coverage is horizon-sensitive
+and sits at nominal within per-seed noise. Guaranteeing coverage strictly
+`>= 1 - alpha` out-of-sample under forecast-quality drift is the adaptive
+layer's job (ACI/DtACI, G3/G4), not fixed-alpha split conformal's.
 
 **Relates to.** ADR-001 (core coverage promise), ADR-002 (CQR score
 coverage), ADR-003 (per-stratum coverage / provenance tiers).
