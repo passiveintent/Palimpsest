@@ -62,6 +62,22 @@ the 2KB RESIDUAL it replaces); what drops is fidelity: from
 ~m/5 ≈ 400 simultaneous deviations, recovery degrades without the breaker
 firing — that corridor is unguaranteed by construction.
 
+Two facts the 30-day benchmark ([LEDGER.md](LEDGER.md), `plsim --month`)
+measured about a *sustained* storm (a 30-minute AZ outage):
+
+- **The fallback burst is keyframe-bounded, not storm-bounded.** A level
+  shift only produces residual energy until the next keyframe re-bases it
+  into every affected baseline (ADR-003) — at defaults, ≤60s. The breaker
+  fired for the first ~30s of the 30-minute outage, RESIDUAL frames
+  resumed against the re-based fleet, and the recovery transient at
+  outage end fired it again. Anything you want from FALLBACK's exact
+  top-K, you get in that first minute.
+- **Per-emitter sharding is what keeps top-K coverage alive.** 30% of a
+  10k-series fleet is ~600 affected sum-series, far past one top-100
+  frame; sharded across 8 emitters it is ~75 per frame, and measured
+  coverage was 99%. A single-emitter shard in the same incident would
+  cover 100/600 ≈ 17%.
+
 ## 6-8. Dashcam forensics: the T-45 problem and the caps
 
 The instance ring buffer is a **lookback from flag time, not root-cause
@@ -114,16 +130,22 @@ or accept that slow-burn forensics belong to Layer 1 + the exact tier.
   per-series recovered values on one side of the boundary, top-K heavy
   hitters on the other — which breaks the exchangeability assumption at
   the switch points. DtACI is designed for distribution *shift*, not for
-  the observable being redefined mid-stream. Whether coverage guarantees
-  hold across switches, and how long re-calibration takes after a storm
-  window, needs a statistical gate in that repo (`docs/GATES.md` there)
+  the observable being redefined mid-stream. The 30-day benchmark
+  ([LEDGER.md](LEDGER.md)) sharpens the question: the FALLBACK interlude
+  itself is short (keyframe-bounded, ~30s measured), but the keyframe
+  that ends it *re-bases every affected series*, so post-storm residuals
+  are drawn against a different baseline than the calibration window —
+  two distinct exchangeability breaks per storm, not one. Whether
+  coverage guarantees hold across them, and how long re-calibration
+  takes, needs a statistical gate in that repo (`docs/GATES.md` there)
   before any coverage claim spans a storm.
 - **Detection-lag distribution vs the ring window.** The T-45 statement
-  above is the deterministic bound. The distribution of actual detection
-  lags (threshold crossing time as a function of anomaly ramp shape) —
-  i.e. what fraction of real slow-burns exceed the 15m lookback — is
-  characterized concretely per incident by the 30-day benchmark's slow-leak
-  scenario, but a full sweep over ramp shapes hasn't been run.
+  above is the deterministic bound, and the 30-day benchmark's slow-leak
+  scenario measures one concrete point ([LEDGER.md](LEDGER.md)): a 6-hour
+  ramp is first *flagged* only at its end-of-ramp collapse, when the 15m
+  lookback covers 4.2% of the climb. A full sweep over ramp shapes (what
+  fraction of realistic slow-burns exceed the lookback, as a distribution)
+  hasn't been run.
 
 ## Re-measuring
 

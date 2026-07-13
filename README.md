@@ -237,7 +237,12 @@ wire contract, not part of the protocol itself.
 
 See [docs/COSTS.md](docs/COSTS.md) for the full decomposition and the
 honest anti-claim (if you're already self-hosting Prometheus at 60s, this
-doesn't save you money — the wedge is per-series-billed SaaS). Summary:
+doesn't save you money — the wedge is per-series-billed SaaS). For a
+*measured* number instead of a modeled one, `plsim --month` replays a
+simulated month — 10,000 Kubernetes-shaped series, churn, seasonality,
+and three scripted incidents that fire every exact-data escape hatch —
+and keeps a byte-exact ledger against raw remote-write:
+[docs/LEDGER.md](docs/LEDGER.md). Summary of the model:
 
 | Line | v1 (raw 15s remote-write) | Palimpsest | Savings |
 | --- | --- | --- | --- |

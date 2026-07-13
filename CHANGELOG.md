@@ -9,6 +9,21 @@ entries accumulate under **Unreleased** until the first one ships.
 
 ### Added
 
+- **30-day byte ledger (`plsim --month`, M2 benchmark)**: a simulated
+  month of Kubernetes-shaped telemetry (10k per-instance series folded
+  into 6k sketched logical series per ADR-008, daily seasonality,
+  per-instance noise, pod churn that never touches the sketch and logical
+  churn that does) with three scripted incidents — a 15-min error spike
+  (FISTA path + ADR-003 re-basing), a 6-hour slow leak placed inside the
+  measured dead zone, and a 30-min AZ collapse (ADR-004 storm fallback).
+  Keeps a byte-exact two-sided ledger: every Palimpsest frame via
+  `wire.EncodedSize` (keyframes, KDELTA, RESIDUAL, FALLBACK, snapshot
+  blobs) vs the same fleet as exact prompb remote-write compressed with
+  real snappy and zstd. Emits `month.csv`, a daily-bytes `month.svg`, and
+  an incident detection report (substrates (a)/(c), storm behavior,
+  ring-buffer lookback coverage). Measured results in `docs/LEDGER.md`.
+  `cmd/plsim`'s pipeline gained the otel processor's ADR-004 storm
+  fallback path (armed only in --month mode).
 - **Operating envelope (`docs/ENVELOPE.md`)**: the honest-loss spec sheet
   — every documented loss mode (dead zone, storm fidelity, dashcam T-45
   lookback and memory caps, churn-breaker shedding, quantile exclusion,
