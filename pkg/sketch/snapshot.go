@@ -27,6 +27,14 @@ type ringSample struct {
 // ADR-012): the snapshot is the ring buffer's content at that moment, not
 // just the current sample.
 //
+// The window is a LOOKBACK from flag time, not a promise about root-cause
+// coverage: a snapshot taken when a series finally crosses the threshold
+// at T-0 carries only the last `window` of samples. A slow-burn cause
+// that started before that (a memory leak at T-45min against the default
+// 15-minute window) is structurally absent from the snapshot — the only
+// earlier record is the exact keyframe layer, at logical (not instance)
+// granularity. See docs/ENVELOPE.md §Dashcam forensics.
+//
 // Push, Snapshot, and Drain are deliberately isolated from each other:
 // Push never evicts on the caller's behalf beyond RingBuffer's own
 // construction-time window, Snapshot never mutates or drains the buffer,

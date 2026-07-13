@@ -160,7 +160,10 @@ exists specifically to prove this holds under load: see
 
 ## Limitations
 
-Said plainly, because the alternative is someone finding out the hard way:
+Said plainly, because the alternative is someone finding out the hard way.
+The quantified version — every loss mode with its boundary numbers and the
+test or measurement backing each one — is the operating envelope:
+[docs/ENVELOPE.md](docs/ENVELOPE.md).
 
 - **Quantiles and percentiles can't be sketched.** Linear measurements
   don't compose through a quantile function. Summary/histogram-quantile
@@ -203,11 +206,19 @@ Said plainly, because the alternative is someone finding out the hard way:
   small to see in any one shard still needs enough agents and
   good-enough baselines to clear a real SNR bar. Thin fleets (one or two
   emitters per shard) see no benefit from the merged path.
-- **Instance-level forensics is bounded, by design.** The ring buffer is
-  5-15 minutes; a dashcam snapshot is captured once, at flag time. Beyond
-  that window, the exact-value Layer 1 and the sketch-recovered Layer 2
-  are the record — there is no "go back and look at every pod from last
-  Tuesday." See ADR-008/ADR-009 and `docs/SPEC.md`.
+- **Instance-level forensics is bounded, by design — and the bound is a
+  lookback, not root-cause coverage.** The ring buffer is 5-15 minutes; a
+  dashcam snapshot is captured once, at flag time. A slow-burn cause that
+  started before the window (a memory leak at T-45 minutes that only
+  trips a threshold at T-0) is structurally absent from the snapshot; the
+  only earlier record is Layer-1 keyframes, at logical — not instance —
+  granularity. Memory is hard-capped (`max_instances_per_logical`,
+  `max_total_bytes`), and when a cap binds, *new* instances silently stop
+  being buffered (their aggregates are unaffected), so drilldown coverage
+  narrows exactly during cardinality explosions. There is no "go back and
+  look at every pod from last Tuesday." See ADR-008/ADR-009,
+  `docs/SPEC.md`, and the quantified trade-offs in
+  [docs/ENVELOPE.md](docs/ENVELOPE.md).
 
 ## Protocol
 

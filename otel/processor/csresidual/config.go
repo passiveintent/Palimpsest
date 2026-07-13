@@ -61,6 +61,16 @@ type SnapshotConfig struct {
 
 // RingBufferConfig configures the agent-side instance ring buffer
 // (ADR-008): pod/instance labels never enter the sketch, they live here.
+//
+// Window is a lookback from flag time: a dashcam snapshot captured when a
+// series is flagged at T-0 contains at most the last Window of instance
+// samples, so a root cause that predates the window (a leak that started
+// at T-45min against the default 15m) is structurally outside the
+// snapshot. MaxInstancesPerLogical and MaxTotalBytes are hard memory caps,
+// not targets: when either binds, ringbuffer.go's push silently stops
+// buffering NEW instances (their samples still fold into the sketched
+// aggregates), so drilldown coverage narrows exactly during cardinality
+// explosions. Both trade-offs are quantified in docs/ENVELOPE.md.
 type RingBufferConfig struct {
 	Window                 time.Duration `mapstructure:"window"`
 	MaxInstancesPerLogical int           `mapstructure:"max_instances_per_logical"`

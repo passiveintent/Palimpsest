@@ -9,6 +9,17 @@ entries accumulate under **Unreleased** until the first one ships.
 
 ### Added
 
+- **Operating envelope (`docs/ENVELOPE.md`)**: the honest-loss spec sheet
+  — every documented loss mode (dead zone, storm fidelity, dashcam T-45
+  lookback and memory caps, churn-breaker shedding, quantile exclusion,
+  keyframe reversal, thin-fleet merged tier, the ~1× anti-claim) with its
+  boundary numbers and the test/tool receipt behind each. The ring-buffer
+  window is now explicitly documented as a *lookback from flag time* (a
+  root cause older than `ringbuffer.window` — a leak at T-45min against
+  the 15m default — is structurally absent from a dashcam snapshot), and
+  the silent narrowing of drilldown coverage when
+  `max_instances_per_logical`/`max_total_bytes` bind is documented at the
+  config and README level.
 - **Dead-zone sweep (`plsim --deadzone`)**: an empirical hunt for the gap
   between ADR-004's storm fallback and ADR-002's FISTA recovery — a single
   small anomaly diluted in per-series background noise, run through the
