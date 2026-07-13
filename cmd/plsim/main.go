@@ -100,6 +100,12 @@ type flags struct {
 	// instead of generating frames. See cmd/plsim/deadzone.go and
 	// docs/DEADZONE.md.
 	dz deadzoneFlags
+
+	// month (--month) switches plsim into the 30-day byte-ledger
+	// benchmark (M2): amortized bytes-on-wire vs raw remote-write across
+	// a simulated month with three scripted incidents. See
+	// cmd/plsim/month.go.
+	month monthFlags
 }
 
 func parseFlags() flags {
@@ -145,6 +151,7 @@ func parseFlags() flags {
 	flag.IntVar(&f.mergedScattered, "merged-scattered", 20, "ADR-015 merged-tier scenario: scattered singleton anomaly count (ignored if --merged-emitters is 0)")
 
 	registerDeadzoneFlags(&f.dz)
+	registerMonthFlags(&f.month)
 
 	flag.Parse()
 	return f
@@ -152,6 +159,9 @@ func parseFlags() flags {
 
 func run() error {
 	f := parseFlags()
+	if f.month.enabled {
+		return runMonth(f)
+	}
 	if f.dz.enabled {
 		return runDeadzone(f)
 	}

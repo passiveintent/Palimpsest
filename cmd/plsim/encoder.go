@@ -10,6 +10,7 @@ package main
 
 import (
 	"math"
+	"sort"
 	"time"
 
 	"github.com/passiveintent/Palimpsest/pkg/predict"
@@ -38,6 +39,15 @@ type pipelineConfig struct {
 	// (ADR-006 §Addendum); the zero value, wire.CodecNone, is a no-op and
 	// matches this tool's pre-existing (uncompressed) behavior.
 	Codec wire.Codec
+
+	// Storm, when non-nil, arms ADR-004 storm fallback exactly as
+	// otel/processor/csresidual does: on a non-keyframe window whose
+	// pre-quantization energy trips the detector, the pipeline ships a
+	// FALLBACK frame (top-FallbackTopK heavy hitters + aggregates) instead
+	// of a RESIDUAL. nil keeps the pre-existing keyframe/residual-only
+	// behavior (the normal plsim simulation leaves it nil; --month arms it).
+	Storm        *sketch.StormDetector
+	FallbackTopK int
 }
 
 // pipeline is one (emitter, view)'s complete encode-side state: Tracker +
@@ -129,9 +139,12 @@ func (p *pipeline) flush(now time.Time, seq uint32, values map[string]float64) *
 	}
 
 	keyframeWindow := p.cfg.KeyframeEvery > 0 && seq%uint32(p.cfg.KeyframeEvery) == 0
-	if keyframeWindow {
+	switch {
+	case keyframeWindow:
 		p.buildKeyframe(f, dictDeltas, tombstones)
-	} else {
+	case p.cfg.Storm != nil && p.cfg.Storm.Trigger(energy):
+		p.buildFallback(f, dictDeltas)
+	default:
 		res, err := wire.BuildResidual(wire.ResidualBuildInput{
 			Y:          y,
 			Bits:       uint8(p.cfg.Bits),
@@ -168,6 +181,42 @@ func (p *pipeline) flush(now time.Time, seq uint32, values map[string]float64) *
 
 	p.tracker.ResetWindow()
 	return f
+}
+
+// buildFallback builds f as an ADR-004 FALLBACK frame, mirroring
+// otel/processor/csresidual's buildFallback: the top-FallbackTopK series
+// by |residual| this window, reported at their last exact values, plus
+// the fleet-wide sum/count aggregates over every active series.
+func (p *pipeline) buildFallback(f *wire.Frame, dictDeltas []wire.DictDelta) {
+	topK := p.tracker.TopKResiduals(p.cfg.FallbackTopK)
+	full := p.tracker.FullDict()
+
+	lastValue := make(map[uint64]float32, len(full))
+	var totalSum float64
+	for _, dd := range full {
+		lastValue[dd.ID] = dd.InitValue
+		totalSum += float64(dd.InitValue)
+	}
+
+	ids := make([]uint64, 0, len(topK))
+	for id := range topK {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+
+	values := make(map[uint64]float32, len(ids))
+	for _, id := range ids {
+		values[id] = lastValue[id]
+	}
+
+	payload, err := wire.EncodeFallback(ids, values, totalSum, uint64(len(full)))
+	if err != nil {
+		panic(err)
+	}
+	f.FrameType = wire.FrameTypeFallback
+	f.Payload = payload
+	f.DictDeltas = dictDeltas
+	f.DictRoot = wire.ComputeDictRoot(p.tracker.ActiveIDs())
 }
 
 // buildKeyframe builds f as a KEYFRAME frame. tombstones is this same
