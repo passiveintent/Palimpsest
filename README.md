@@ -41,7 +41,7 @@ before depending on it for anything that matters.
 | [001](docs/adr/ADR-001-language-and-oracle.md) | Language & oracle | ✅ Complete | `pkg/*/golden_test.go` — byte-exact against Python oracle | `make golden` regenerates | Recovery vectors are tolerance-compared, not byte-exact (BLAS rounding; ADR-001 asterisk) |
 | [002](docs/adr/ADR-002-hash-implicit-phi.md) | Hash-implicit Φ | ✅ Complete | `pkg/sketch/hash_test.go`, `accumulator_test.go`, golden hashing + HKDF vectors | Every sketch in demo | Deterministic by construction; none |
 | [003](docs/adr/ADR-003-open-loop-residuals.md) | Open-loop (Hold) predictor | ✅ Complete | `pkg/predict/predict_test.go`, `TestE2E_SlowDriftKeyframe` | Default predictor in demo | Spike at keyframe boundary appears to "reverse" — correct, explainable (see Limitations) |
-| [004](docs/adr/ADR-004-storm-fallback.md) | Storm fallback | ✅ Complete | `pkg/sketch/storm_test.go`, `TestFallbackOnStormTrigger`, `TestMatcher_EvalFallback` | `--hot-instance` triggers FALLBACK frames | FALLBACK is lower-fidelity; m/5 density cliff is real (see Limitations) |
+| [004](docs/adr/ADR-004-storm-fallback.md) | Storm fallback | ✅ Complete | `pkg/sketch/storm_test.go`, `TestFallbackOnStormTrigger`, `TestMatcher_EvalFallback` | `--hot-instance` triggers FALLBACK frames; `--deadzone` maps the small-anomaly boundary | FALLBACK is lower-fidelity; m/5 density cliff is real; small-anomaly dead zone measured in [docs/DEADZONE.md](docs/DEADZONE.md) |
 | [005](docs/adr/ADR-005-tiering.md) | Tiering (exact / sketched / merged) | ✅ Complete | `pkg/tier/tier_test.go`, `TestMatchTier_AllTiers`, `TestExactTierPassesUntouched` | Tier rules in `otelcol-config.yaml` | Quantiles/percentiles must use exact tier — no savings available for them |
 | [006](docs/adr/ADR-006-wire-format.md) | Wire format + codec registry | ✅ Complete | `pkg/wire/codec_test.go`, `golden_test.go`, `rfc_sync_test.go`, `zstdcodec_test.go` | All demo frames; `TestRFCFrameTableInSync` CI-guards the RFC table | v1 is decode-only; `zstdcodec.Register()` required at startup for zstd frames |
 | [007](docs/adr/ADR-007-hexagonal-service.md) | Hexagonal service | ✅ Complete | Adapter tests: fswatch, httpsrc, jsonl, kafka, remoteprom, webhook | `palimpsestd` is demo reconstructor | None |
@@ -174,6 +174,17 @@ Said plainly, because the alternative is someone finding out the hard way:
   fleet-wide incident is exactly when you get the least detail from this
   layer. (It's also, not coincidentally, exactly when you least need
   per-series detail to know something is on fire.)
+- **There is a measured dead zone between the storm breaker and sparse
+  recovery.** A single small anomaly (a low-volume payment service going
+  0.01%→0.5% errors) is far too small to spike global sketch energy, and
+  once per-series background jitter is large enough, it is also too small
+  to survive FISTA recovery — so Layer 2 emits nothing for it. The
+  boundary is mapped empirically by `plsim --deadzone` and documented in
+  [docs/DEADZONE.md](docs/DEADZONE.md): at production defaults the
+  absolute floor is ~0.4 residual units (ratio-shaped series never clear
+  it), the floor rises with noise, and per-series jitter σ ≳ 0.3 residual
+  units closes palimpsestd's max-residual gate entirely. Alerting below
+  that boundary needs the exact tier (ADR-005), by design.
 - **A short anomaly that straddles a keyframe boundary can look like it
   "reverses."** Keyframes periodically re-base the open-loop predictor to
   the current exact value (ADR-003); if a brief spike is still elevated

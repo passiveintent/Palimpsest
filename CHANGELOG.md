@@ -9,6 +9,19 @@ entries accumulate under **Unreleased** until the first one ships.
 
 ### Added
 
+- **Dead-zone sweep (`plsim --deadzone`)**: an empirical hunt for the gap
+  between ADR-004's storm fallback and ADR-002's FISTA recovery — a single
+  small anomaly diluted in per-series background noise, run through the
+  real Accumulator → quantize/dequantize → Recover path plus the real
+  StormDetector at production defaults, mapped over a magnitude × noise
+  grid. Emits `deadzone.csv`, a `deadzone.svg` heatmap and a boundary
+  summary; `docs/DEADZONE.md` documents the measured boundary (absolute
+  recovery floor ~0.4 residual units, noise-scaled floor, max-residual
+  gate closure from σ≈0.3 — including the λ-coupling band-pass where a
+  *larger* anomaly suppresses its own deviation event — and the ~147σ
+  storm bar). README Limitations and ADR-004 now point at it, and
+  `cmd/plsim/deadzone_test.go` pins the zone's existence.
+
 - **Wire protocol RFC**: [docs/rfc/palimpsest-wire-v2.md](docs/rfc/palimpsest-wire-v2.md)
   freezes v2 as the specified, encoder-mandatory wire protocol (v1 remains
   read-only legacy), extracted from `docs/SPEC.md` into a standalone
