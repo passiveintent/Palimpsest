@@ -9,6 +9,45 @@ entries accumulate under **Unreleased** until the first one ships.
 
 ### Added
 
+- **30-day byte ledger (`plsim --month`, M2 benchmark)**: a simulated
+  month of Kubernetes-shaped telemetry (10k per-instance series folded
+  into 6k sketched logical series per ADR-008, daily seasonality,
+  per-instance noise, pod churn that never touches the sketch and logical
+  churn that does) with three scripted incidents — a 15-min error spike
+  (FISTA path + ADR-003 re-basing), a 6-hour slow leak placed inside the
+  measured dead zone, and a 30-min AZ collapse (ADR-004 storm fallback).
+  Keeps a byte-exact two-sided ledger: every Palimpsest frame via
+  `wire.EncodedSize` (keyframes, KDELTA, RESIDUAL, FALLBACK, snapshot
+  blobs) vs the same fleet as exact prompb remote-write compressed with
+  real snappy and zstd. Emits `month.csv`, a daily-bytes `month.svg`, and
+  an incident detection report (substrates (a)/(c), storm behavior,
+  ring-buffer lookback coverage). Measured results in `docs/LEDGER.md`.
+  `cmd/plsim`'s pipeline gained the otel processor's ADR-004 storm
+  fallback path (armed only in --month mode).
+- **Operating envelope (`docs/ENVELOPE.md`)**: the honest-loss spec sheet
+  — every documented loss mode (dead zone, storm fidelity, dashcam T-45
+  lookback and memory caps, churn-breaker shedding, quantile exclusion,
+  keyframe reversal, thin-fleet merged tier, the ~1× anti-claim) with its
+  boundary numbers and the test/tool receipt behind each. The ring-buffer
+  window is now explicitly documented as a *lookback from flag time* (a
+  root cause older than `ringbuffer.window` — a leak at T-45min against
+  the 15m default — is structurally absent from a dashcam snapshot), and
+  the silent narrowing of drilldown coverage when
+  `max_instances_per_logical`/`max_total_bytes` bind is documented at the
+  config and README level.
+- **Dead-zone sweep (`plsim --deadzone`)**: an empirical hunt for the gap
+  between ADR-004's storm fallback and ADR-002's FISTA recovery — a single
+  small anomaly diluted in per-series background noise, run through the
+  real Accumulator → quantize/dequantize → Recover path plus the real
+  StormDetector at production defaults, mapped over a magnitude × noise
+  grid. Emits `deadzone.csv`, a `deadzone.svg` heatmap and a boundary
+  summary; `docs/DEADZONE.md` documents the measured boundary (absolute
+  recovery floor ~0.4 residual units, noise-scaled floor, max-residual
+  gate closure from σ≈0.3 — including the λ-coupling band-pass where a
+  *larger* anomaly suppresses its own deviation event — and the ~147σ
+  storm bar). README Limitations and ADR-004 now point at it, and
+  `cmd/plsim/deadzone_test.go` pins the zone's existence.
+
 - **Wire protocol RFC**: [docs/rfc/palimpsest-wire-v2.md](docs/rfc/palimpsest-wire-v2.md)
   freezes v2 as the specified, encoder-mandatory wire protocol (v1 remains
   read-only legacy), extracted from `docs/SPEC.md` into a standalone

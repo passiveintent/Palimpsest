@@ -93,6 +93,19 @@ type flags struct {
 	mergedEmitters  int
 	mergedGroupSize int
 	mergedScattered int
+
+	// dz (--deadzone) switches plsim into the ADR-002/ADR-004 dead-zone
+	// sweep — mapping where a single small anomaly is both too small to
+	// trip the storm fallback and too small to survive FISTA recovery —
+	// instead of generating frames. See cmd/plsim/deadzone.go and
+	// docs/DEADZONE.md.
+	dz deadzoneFlags
+
+	// month (--month) switches plsim into the 30-day byte-ledger
+	// benchmark (M2): amortized bytes-on-wire vs raw remote-write across
+	// a simulated month with three scripted incidents. See
+	// cmd/plsim/month.go.
+	month monthFlags
 }
 
 func parseFlags() flags {
@@ -137,12 +150,21 @@ func parseFlags() flags {
 	flag.IntVar(&f.mergedGroupSize, "merged-group-size", 500, "ADR-015 merged-tier scenario: correlated-group member count (AZ-outage shape, ignored if --merged-emitters is 0)")
 	flag.IntVar(&f.mergedScattered, "merged-scattered", 20, "ADR-015 merged-tier scenario: scattered singleton anomaly count (ignored if --merged-emitters is 0)")
 
+	registerDeadzoneFlags(&f.dz)
+	registerMonthFlags(&f.month)
+
 	flag.Parse()
 	return f
 }
 
 func run() error {
 	f := parseFlags()
+	if f.month.enabled {
+		return runMonth(f)
+	}
+	if f.dz.enabled {
+		return runDeadzone(f)
+	}
 	if err := os.MkdirAll(f.framesOut, 0o755); err != nil {
 		return fmt.Errorf("creating --frames-out %q: %w", f.framesOut, err)
 	}

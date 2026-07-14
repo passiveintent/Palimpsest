@@ -301,9 +301,13 @@ func TestE2E_MergedTierProvenEscalation(t *testing.T) {
 	t.Logf("proven scenario: emitters=%d confidence=%q residual=%.4f raw_support=%d groups=%d recall=%.2f (%d/%d) iters=%d restarts=%d z_score=%.1f merged_windows{proven}=%d solve_time=%s",
 		emitters, r.res.Confidence, r.res.Residual, r.res.RawSupport, len(r.res.GroupIDs), recall, hit, mergedGroupSize, r.res.Iters, r.res.Restarts, zScore, r.met.MergedWindows(recover.MergedTrustProven), r.solveDur)
 
-	// ADR-014's existing decode budget (testGroupCaseWallTime): >=1.5s absolute.
-	if r.solveDur > 1500*time.Millisecond {
-		t.Fatalf("escalated solve wall time %s exceeds the 1.5s decode budget (ADR-014)", r.solveDur)
+	// ADR-014's existing decode budget (testGroupCaseWallTime): >=1.5s
+	// absolute, scaled by wallTimeRaceMultiplier exactly as pkg/recover's
+	// own budget check is — CI runs this under -race, whose 5-20x
+	// instrumentation overhead is not a recovery regression.
+	maxSolve := 1500 * time.Millisecond * time.Duration(wallTimeRaceMultiplier)
+	if r.solveDur > maxSolve {
+		t.Fatalf("escalated solve wall time %s exceeds the decode budget %s (ADR-014, 1.5s x race multiplier %d)", r.solveDur, maxSolve, wallTimeRaceMultiplier)
 	}
 }
 
