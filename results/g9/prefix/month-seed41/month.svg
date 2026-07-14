@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="420" viewBox="0 0 780 420" role="img" aria-label="Daily bytes on wire, Palimpsest vs raw remote-write, log scale">
+<rect width="780" height="420" rx="8" fill="#fcfcfb"/>
+<g font-family="system-ui, -apple-system, 'Segoe UI', sans-serif">
+<text x="84" y="30" font-size="16" font-weight="600" fill="#0b0b0b">Bytes on wire per day — 10000 raw series, 6 simulated days</text>
+<text x="84" y="50" font-size="11.5" fill="#52514e">flush 10s · keyframe every 6 windows · 8 emitters · three scripted incidents · log scale</text>
+<line x1="84.0" y1="364.0" x2="608.0" y2="364.0" stroke="#e1e0d9" stroke-width="1"/>
+<text x="76.0" y="368.0" font-size="11" fill="#898781" text-anchor="end" style="font-variant-numeric: tabular-nums">100 MB</text>
+<line x1="84.0" y1="224.0" x2="608.0" y2="224.0" stroke="#e1e0d9" stroke-width="1"/>
+<text x="76.0" y="228.0" font-size="11" fill="#898781" text-anchor="end" style="font-variant-numeric: tabular-nums">1 GB</text>
+<line x1="84.0" y1="84.0" x2="608.0" y2="84.0" stroke="#e1e0d9" stroke-width="1"/>
+<text x="76.0" y="88.0" font-size="11" fill="#898781" text-anchor="end" style="font-variant-numeric: tabular-nums">10 GB</text>
+<line x1="215.0" y1="78.0" x2="215.0" y2="364.0" stroke="#c3c2b7" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="215.0" y="72.0" font-size="10.5" fill="#898781" text-anchor="middle">spike</text>
+<line x1="334.4" y1="78.0" x2="334.4" y2="364.0" stroke="#c3c2b7" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="334.4" y="72.0" font-size="10.5" fill="#898781" text-anchor="middle">leak</text>
+<line x1="461.0" y1="78.0" x2="461.0" y2="364.0" stroke="#c3c2b7" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="461.0" y="72.0" font-size="10.5" fill="#898781" text-anchor="middle">azdown</text>
+<polyline points="84.0,316.8 188.8,316.9 293.6,316.9 398.4,316.9 503.2,316.9 608.0,316.9" fill="none" stroke="#2a78d6" stroke-width="2" stroke-linejoin="round"/>
+<line x1="614.0" y1="316.9" x2="626.0" y2="316.9" stroke="#2a78d6" stroke-width="3"/>
+<text x="632.0" y="320.9" font-size="11" fill="#52514e">Palimpsest (total)</text>
+<polyline points="84.0,166.0 188.8,165.7 293.6,165.6 398.4,165.6 503.2,165.6 608.0,165.6" fill="none" stroke="#1baf7a" stroke-width="2" stroke-linejoin="round"/>
+<line x1="614.0" y1="165.6" x2="626.0" y2="165.6" stroke="#1baf7a" stroke-width="3"/>
+<text x="632.0" y="169.6" font-size="11" fill="#52514e">remote-write, snappy</text>
+<polyline points="84.0,203.4 188.8,203.1 293.6,203.0 398.4,203.0 503.2,203.1 608.0,203.0" fill="none" stroke="#eda100" stroke-width="2" stroke-linejoin="round"/>
+<line x1="614.0" y1="203.0" x2="626.0" y2="203.0" stroke="#eda100" stroke-width="3"/>
+<text x="632.0" y="207.0" font-size="11" fill="#52514e">remote-write, zstd</text>
+<text x="84.0" y="382.0" font-size="11" fill="#898781" text-anchor="middle" style="font-variant-numeric: tabular-nums">0</text>
+<text x="188.8" y="382.0" font-size="11" fill="#898781" text-anchor="middle" style="font-variant-numeric: tabular-nums">1</text>
+<text x="293.6" y="382.0" font-size="11" fill="#898781" text-anchor="middle" style="font-variant-numeric: tabular-nums">2</text>
+<text x="398.4" y="382.0" font-size="11" fill="#898781" text-anchor="middle" style="font-variant-numeric: tabular-nums">3</text>
+<text x="503.2" y="382.0" font-size="11" fill="#898781" text-anchor="middle" style="font-variant-numeric: tabular-nums">4</text>
+<text x="608.0" y="382.0" font-size="11" fill="#898781" text-anchor="middle" style="font-variant-numeric: tabular-nums">5</text>
+<text x="346.0" y="404.0" font-size="12" fill="#52514e" text-anchor="middle">simulated day</text>
+<line x1="84.0" y1="364.0" x2="608.0" y2="364.0" stroke="#c3c2b7" stroke-width="1"/>
+</g>
+</svg>
