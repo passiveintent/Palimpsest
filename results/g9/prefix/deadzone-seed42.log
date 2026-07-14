@@ -1,0 +1,18 @@
+2026/07/14 11:42:18 plsim: dead-zone sweep started (m=2000 d=6 bits=8 background=900 cells=8x11 trials=25 storm=25x/30w topk=100 fista iters=350 lambda=0.05 threshold=0.3 gate=5)
+2026/07/14 11:42:18 plsim: deadzone noise=0 done (1/8 columns)
+2026/07/14 11:42:20 plsim: deadzone noise=0.05 done (2/8 columns)
+2026/07/14 11:42:21 plsim: deadzone noise=0.1 done (3/8 columns)
+2026/07/14 11:42:22 plsim: deadzone noise=0.2 done (4/8 columns)
+2026/07/14 11:42:24 plsim: deadzone noise=0.4 done (5/8 columns)
+2026/07/14 11:42:26 plsim: deadzone noise=0.8 done (6/8 columns)
+2026/07/14 11:42:27 plsim: deadzone noise=1.6 done (7/8 columns)
+2026/07/14 11:42:29 plsim: deadzone noise=3.2 done (8/8 columns)
+2026/07/14 11:42:29 plsim: deadzone noise=0: recovery floor (>=90%) 0.4, detection floor (>=90%) 0.1, storm fires from 0.1, undetected up to —
+2026/07/14 11:42:29 plsim: deadzone noise=0.05: recovery floor (>=90%) 0.4, detection floor (>=90%) 0.4, storm fires from 12.8, undetected up to 0.2
+2026/07/14 11:42:29 plsim: deadzone noise=0.1: recovery floor (>=90%) 0.8, detection floor (>=90%) 0.8, storm fires from 25.6, undetected up to 0.2
+2026/07/14 11:42:29 plsim: deadzone noise=0.2: recovery floor (>=90%) —, detection floor (>=90%) 51.2, storm fires from 51.2, undetected up to 25.6
+2026/07/14 11:42:29 plsim: deadzone noise=0.4: recovery floor (>=90%) —, detection floor (>=90%) 102.4, storm fires from 102.4, undetected up to 51.2
+2026/07/14 11:42:29 plsim: deadzone noise=0.8: recovery floor (>=90%) —, detection floor (>=90%) —, storm fires from —, undetected up to 102.4
+2026/07/14 11:42:29 plsim: deadzone noise=1.6: recovery floor (>=90%) —, detection floor (>=90%) —, storm fires from —, undetected up to 102.4
+2026/07/14 11:42:29 plsim: deadzone noise=3.2: recovery floor (>=90%) —, detection floor (>=90%) —, storm fires from —, undetected up to 102.4
+2026/07/14 11:42:29 plsim: dead-zone sweep complete: results/g9/prefix/deadzone-seed42/deadzone.csv, results/g9/prefix/deadzone-seed42/deadzone.svg, results/g9/prefix/deadzone-seed42/deadzone-summary.md

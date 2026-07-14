@@ -48,6 +48,12 @@ type pipelineConfig struct {
 	// behavior (the normal plsim simulation leaves it nil; --month arms it).
 	Storm        *sketch.StormDetector
 	FallbackTopK int
+
+	// CaptureResiduals, when true, makes flush record every series'
+	// residual for the window in lastResiduals (G9 harness bookkeeping:
+	// per-series freeze bands and detector scoring). Off for the normal
+	// simulation, --deadzone and --month, whose behavior is unchanged.
+	CaptureResiduals bool
 }
 
 // pipeline is one (emitter, view)'s complete encode-side state: Tracker +
@@ -70,7 +76,24 @@ type pipeline struct {
 	prevKeyframeValues map[uint64]float32
 
 	ringBuffers map[uint64]*sketch.RingBuffer
+
+	// frozen is the set of series whose open-loop baselines are currently
+	// frozen (G9 fix F3): buildKeyframe keeps the predictor's existing
+	// baseline for these instead of re-basing to the keyframe value, so a
+	// flagged anomaly keeps producing residuals instead of being absorbed
+	// at the next keyframe (ADR-003's re-basing). nil/empty means the
+	// pre-existing behavior, exactly.
+	frozen map[uint64]struct{}
+
+	// lastResiduals is the most recent flush's per-series residuals when
+	// cfg.CaptureResiduals is set; nil otherwise.
+	lastResiduals map[uint64]float64
 }
+
+// SetFrozen replaces the frozen-baseline set (G9 fix F3). The caller owns
+// the freeze/unfreeze policy; the pipeline only honors the set at keyframe
+// re-base time.
+func (p *pipeline) SetFrozen(ids map[uint64]struct{}) { p.frozen = ids }
 
 func newPipeline(cfg pipelineConfig) *pipeline {
 	seed := sketch.DeriveEphemeralSeed(cfg.TenantKey, cfg.ShardID, uint32(cfg.Epoch), cfg.ViewID)
@@ -95,10 +118,16 @@ func (p *pipeline) flush(now time.Time, seq uint32, values map[string]float64) *
 		maxAbsID       uint64
 		haveCandidate  bool
 	)
+	if p.cfg.CaptureResiduals {
+		p.lastResiduals = make(map[uint64]float64, len(values))
+	}
 	for name, v := range values {
 		id, isNew, residual := p.tracker.Observe([]byte(name), v, now)
 		if !isNew {
 			p.acc.Update([]byte(name), residual)
+		}
+		if p.cfg.CaptureResiduals {
+			p.lastResiduals[id] = residual
 		}
 		if p.cfg.SnapshotThreshold > 0 {
 			rb, ok := p.ringBuffers[id]
@@ -258,5 +287,23 @@ func (p *pipeline) buildKeyframe(f *wire.Frame, dictDeltas, tombstones []wire.Di
 	// every keyframe (see pkg/sketch/lifecycle.go's Tracker.CurrentValues
 	// doc comment) — otherwise residuals accumulate unbounded from birth
 	// and substrate (c) never sees a nonzero keyframe-to-keyframe delta.
+	// G9 fix F3: series in the frozen set keep their existing baseline —
+	// a flagged anomaly must not be re-based away mid-incident. (In a real
+	// deployment the decoder must apply the same freeze rule to stay in
+	// baseline agreement; plsim's single process is trivially consistent.)
+	if len(p.frozen) > 0 {
+		merged := make(map[uint64]float64, len(values64))
+		for id, v := range values64 {
+			if _, isFrozen := p.frozen[id]; isFrozen {
+				if old, ok := p.pred.Predict(id); ok {
+					merged[id] = old
+					continue
+				}
+			}
+			merged[id] = v
+		}
+		p.pred.LoadKeyframe(merged)
+		return
+	}
 	p.pred.LoadKeyframe(values64)
 }

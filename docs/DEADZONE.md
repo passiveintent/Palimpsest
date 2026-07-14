@@ -18,6 +18,22 @@ production defaults with `plsim --deadzone` (see
 limitation*, in the same spirit as README's Limitations section — the
 alternative is someone finding it during an incident.
 
+> **Update (Gate G9, 2026-07-14): the dead zone is not closed by the
+> principled fixes, and substrate (a) is being retired as a detector.** The
+> [ADR-016 verdict](ADR-016-cs-verdict.md) implemented the three specified
+> repairs — a noise-normalized residual gate, a magnitude-independent
+> LASSO penalty, and a keyframe-freeze for flagged series — and measured
+> them against classical detectors on the same bytes. The lambda fix *did*
+> remove the λ-coupling donut (mechanism 3 below is now a decoder bug with
+> a known fix, not a mystery), but the pooled-noise floor (mechanisms 1–2)
+> is physics and survived: the precision-viable gate fires only for
+> anomalies large enough to also trip the storm breaker or move a keyframe.
+> The post-fix map below *widens* the recovery floor in the low-noise
+> columns rather than lowering it. Net: no confirmatory incident is
+> uniquely and economically detected by the sketch path, so it is being
+> deleted (see ADR-016 salvage plan). The map is retained as the measured
+> record of *why*.
+
 ![Dead-zone heatmap: recovery probability by anomaly magnitude and background noise](deadzone.svg)
 
 ## Units, and what "small" means here
@@ -52,6 +68,29 @@ top-K 100 (otel/processor/csresidual defaults). Recovery: FISTA iters=350,
 | 0.8 | — | — | — | 102.4 |
 | 1.6 | — | — | — | 102.4 |
 | 3.2 | — | — | — | 102.4 |
+
+### Post-fix map (Gate G9: F1 normalized gate c_gate=1.0 + F2 λ=κ·σ̂·√(2 ln N), κ=0.7)
+
+Measured by `plsim --g9 --g9-scenario sweep` (seed 41, 15 trials/cell,
+same grid). The recovery floor **rose** in the low-noise columns — the
+precision-calibrated gate only fires when a recovered anomaly pulls the
+residual ratio under 1.0, which small-to-moderate anomalies cannot do
+against the `√n·σ` floor — while the storm-driven detection floor is
+unchanged (storm physics is untouched by F1/F2). The fixes bought
+precision, not reach; the dead zone did not close.
+
+| noise σ | recovery floor (≥90%) | detection floor (≥90%) | storm fires from (≥50%) | undetected up to (<50%) |
+| --- | --- | --- | --- | --- |
+| 0 | 0.4 | 0.1 | 0.1 | — |
+| 0.05 | 51.2 | 12.8 | 12.8 | 6.4 |
+| 0.1 | 102.4 | 25.6 | 25.6 | 12.8 |
+| 0.2 | — | 51.2 | 51.2 | 25.6 |
+| 0.4 | — | 102.4 | 102.4 | 51.2 |
+| 0.8 | — | — | — | 102.4 |
+
+(σ≥1.6 rows carry small-sample MAD-floor artifacts at 15 trials/cell and
+are omitted; the σ≤0.8 structure is the story. Full grid in
+`results/g9/confirm/sweep-postfix-seed*.csv`.)
 
 - **recovery floor**: smallest ε whose deviation event reliably emits
   (target in the FISTA support *and* solve residual under the gate), there

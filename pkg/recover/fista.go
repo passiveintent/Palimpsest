@@ -63,6 +63,14 @@ type Options struct {
 	Lambda     float64 // L1 penalty weight in the FISTA objective
 	PowerIters int     // power-iteration count for the Lipschitz estimate
 
+	// LambdaAbs, when > 0, is used directly as the absolute L1 penalty,
+	// bypassing the Lambda ∝ max|Phi^T y| coupling (G9 fix F2: a
+	// magnitude-independent penalty such as kappa * sigma_hat *
+	// sqrt(2 ln N), computed by the caller from its own noise estimate —
+	// see QuietSigma). 0 keeps the pre-existing ADR-014 scaling, so the
+	// fix is strictly opt-in.
+	LambdaAbs float64
+
 	// Threshold is the post-FISTA support cutoff: a candidate is recovered
 	// when |x_i| > Threshold. This is distinct from Lambda (the
 	// optimization's L1 weight) — see oracle/palimpsest_ref.py's recover().
@@ -170,7 +178,8 @@ func Recover(y []float64, dict *Dictionary, p sketch.Params, o Options) (Result,
 	// Lambda conformance (ADR-014): Options.Lambda is a multiplier applied to
 	// max|Phi^T y| so the penalty scales with the problem's signal magnitude.
 	// lamOverL ∈ [0.01, 0.05] at typical problem scales (SPEC §Recovery).
-	lambdaAbs := scaledLambda(csr, y, o.Lambda, n)
+	// Options.LambdaAbs > 0 overrides that coupling entirely (G9 fix F2).
+	lambdaAbs := effectiveLambda(csr, y, o, n)
 
 	// pool parallelizes every MulInto/MulTransposeInto this solve makes
 	// (FISTA's iteration loop, the Lipschitz power iteration, and — if

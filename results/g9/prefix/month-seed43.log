@@ -1,0 +1,8 @@
+2026/07/14 11:46:27 plsim: month benchmark started (days=6 windows=51840 groups=2000 x 5 pods = 10000 raw series, 6000 sketched; emitters=8 m=2000 codec=zstd)
+2026/07/14 11:48:24 plsim: month ledger: baseline raw 77.66 GiB, snappy 14.58 GiB, zstd 7.87 GiB; palimpsest 1.212 GiB (golden 0.470 / kdelta 0.072 / residual 0.669 / fallback 0.0001 / snapshots 0.0001)
+2026/07/14 11:48:24 plsim: month ledger: amortized compression 12.0x vs snappy remote-write, 6.5x vs zstd remote-write
+2026/07/14 11:48:24 plsim: incident spike: substrate(a) support 0s, emit never (support-rate 47%, gated 100%); substrate(c) drift 30s (max Δ 51.50); storm windows 0 (breaker active never..never); fallback top-K coverage n/a; ring lookback covers 100.0% of the span
+2026/07/14 11:48:24 plsim: incident leak: substrate(a) support 8m20s, emit never (support-rate 11%, gated 100%); substrate(c) drift 1h12m30s (max Δ 19.26); storm windows 0 (breaker active never..never); fallback top-K coverage n/a; ring lookback covers 20.8% of the span
+2026/07/14 11:48:24 plsim: incident azdown: substrate(a) support never, emit never (support-rate 0%, gated 100%); substrate(c) drift 30s (max Δ 101.87); storm windows 24 (breaker active 0s..20s); fallback top-K coverage 99% (1821/1848); ring lookback covers 100.0% of the span
+2026/07/14 11:48:24 plsim: quiet windows: 129 solves, 100% gated at max-residual 5 (mean solve residual 19.91, mean support size 196)
+2026/07/14 11:48:24 plsim: month benchmark complete: results/g9/prefix/month-seed43/month.csv, results/g9/prefix/month-seed43/month.svg, results/g9/prefix/month-seed43/month-summary.md

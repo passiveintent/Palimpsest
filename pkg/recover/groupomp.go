@@ -106,7 +106,7 @@ func RecoverGroup(y []float64, dict *Dictionary, p sketch.Params, grouper Groupe
 	// Use M/ompContextCap (not M/escalationCap) so scattered singletons are not
 	// displaced by AZ-group members whose FISTA amplitudes are cross-talk boosted.
 	// The M/escalationCap escalation trigger in Recover() is separate from this cap.
-	lambdaAbs := scaledLambda(csr, y, o.Lambda, n)
+	lambdaAbs := effectiveLambda(csr, y, o, n)
 	x, xRestarts, xIters := fista(pool, y, lambdaAbs, o.Iters, o.PowerIters, o.ObjectiveCheckEvery)
 	plainRows := cappedSupport(x, o.Threshold, p.M/ompContextCap)
 
@@ -330,6 +330,16 @@ func sortedKeys(m map[int]struct{}) []int {
 	return keys
 }
 
+// effectiveLambda resolves a call's absolute L1 penalty: Options.LambdaAbs
+// when set (G9 fix F2, magnitude-independent), else the ADR-014
+// signal-scaled default via scaledLambda.
+func effectiveLambda(csr *CSR, y []float64, o Options, n int) float64 {
+	if o.LambdaAbs > 0 {
+		return o.LambdaAbs
+	}
+	return scaledLambda(csr, y, o.Lambda, n)
+}
+
 // scaledLambda computes lambdaAbs = lambdaMul * max|Φᵀy| for lambda conformance
 // (ADR-014): the LASSO penalty scales with the signal magnitude so lamOverL
 // lies in [0.01, 0.05] at typical problem scales (SPEC §Recovery).
@@ -395,7 +405,7 @@ func GroupZScore(y []float64, dict *Dictionary, p sketch.Params, grouper Grouper
 	}
 	ids := dict.ActiveIDs()
 
-	lambdaAbs := scaledLambda(csr, y, o.Lambda, n)
+	lambdaAbs := effectiveLambda(csr, y, o, n)
 	pool := newMatvecPool(csr)
 	defer pool.Close()
 	x, _, _ := fista(pool, y, lambdaAbs, o.Iters, o.PowerIters, o.ObjectiveCheckEvery)

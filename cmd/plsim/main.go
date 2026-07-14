@@ -106,6 +106,11 @@ type flags struct {
 	// a simulated month with three scripted incidents. See
 	// cmd/plsim/month.go.
 	month monthFlags
+
+	// g9 (--g9) switches plsim into the Gate G9 pre-registered
+	// confirmatory harness for the compressed-sensing layer verdict. See
+	// cmd/plsim/g9.go and docs/ADR-016-cs-verdict.md.
+	g9 g9Flags
 }
 
 func parseFlags() flags {
@@ -152,6 +157,7 @@ func parseFlags() flags {
 
 	registerDeadzoneFlags(&f.dz)
 	registerMonthFlags(&f.month)
+	registerG9Flags(&f.g9)
 
 	flag.Parse()
 	return f
@@ -159,6 +165,9 @@ func parseFlags() flags {
 
 func run() error {
 	f := parseFlags()
+	if f.g9.enabled {
+		return runG9(f)
+	}
 	if f.month.enabled {
 		return runMonth(f)
 	}

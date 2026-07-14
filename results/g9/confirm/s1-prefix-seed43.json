@@ -1,0 +1,154 @@
+{
+ "scenario": "s1",
+ "label": "prefix",
+ "seed": 43,
+ "f1": false,
+ "f2": false,
+ "f3": false,
+ "c_gate": 0,
+ "kappa": 0,
+ "n": 901,
+ "windows": 432,
+ "solve_every": 1,
+ "solves": 330,
+ "events": 309,
+ "quiet_solves": 90,
+ "quiet_events": 82,
+ "quiet_events_per_day": 4920.000000000001,
+ "quiet_mean_support": 164.6888888888889,
+ "quiet_mean_resid": 4.783427064806341,
+ "quiet_mean_gate": 5,
+ "sigma_hat_last": 0.22488087579845475,
+ "storm_windows": 0,
+ "storm_duty": 0,
+ "drift_flags": 0,
+ "drift_false": 0,
+ "c_persist": 0,
+ "frozen_max": 0,
+ "frozen_at_end": 0,
+ "routed_has_target": false,
+ "bursts": [
+  {
+   "magnitude": 1,
+   "start_win": 39,
+   "dur_win": 90,
+   "targets": 1,
+   "det": {
+    "c": {
+     "detected": false,
+     "lag_sec": 0
+    },
+    "cs": {
+     "detected": true,
+     "lag_sec": 0
+    },
+    "k15": {
+     "detected": false,
+     "lag_sec": 0
+    },
+    "k30": {
+     "detected": false,
+     "lag_sec": 0
+    },
+    "routed": {
+     "detected": false,
+     "lag_sec": 0
+    },
+    "storm": {
+     "detected": false,
+     "lag_sec": 0
+    }
+   },
+   "cs_spurious": 900,
+   "c_spurious": 0
+  },
+  {
+   "magnitude": 1,
+   "start_win": 166,
+   "dur_win": 90,
+   "targets": 1,
+   "det": {
+    "c": {
+     "detected": false,
+     "lag_sec": 0
+    },
+    "cs": {
+     "detected": true,
+     "lag_sec": 10
+    },
+    "k15": {
+     "detected": false,
+     "lag_sec": 0
+    },
+    "k30": {
+     "detected": false,
+     "lag_sec": 0
+    },
+    "routed": {
+     "detected": false,
+     "lag_sec": 0
+    },
+    "storm": {
+     "detected": false,
+     "lag_sec": 0
+    }
+   },
+   "cs_spurious": 900,
+   "c_spurious": 0
+  },
+  {
+   "magnitude": 1,
+   "start_win": 293,
+   "dur_win": 90,
+   "targets": 1,
+   "det": {
+    "c": {
+     "detected": false,
+     "lag_sec": 0
+    },
+    "cs": {
+     "detected": true,
+     "lag_sec": 0
+    },
+    "k15": {
+     "detected": false,
+     "lag_sec": 0
+    },
+    "k30": {
+     "detected": false,
+     "lag_sec": 0
+    },
+    "routed": {
+     "detected": false,
+     "lag_sec": 0
+    },
+    "storm": {
+     "detected": false,
+     "lag_sec": 0
+    }
+   },
+   "cs_spurious": 900,
+   "c_spurious": 0
+  }
+ ],
+ "bytes": {
+  "dumb_k15": 2730144,
+  "dumb_k30": 1399518,
+  "dumb_routed": 762704,
+  "gorilla_10s": 533247,
+  "pal_golden": 584552,
+  "pal_kdelta": 150928,
+  "pal_residual": 748080,
+  "pal_total": 1483560
+ },
+ "bytes_per_day": {
+  "dumb_k15": 54602880,
+  "dumb_k30": 27990360,
+  "dumb_routed": 15254080,
+  "gorilla_10s": 10664940,
+  "pal_golden": 11691040,
+  "pal_kdelta": 3018560,
+  "pal_residual": 14961600,
+  "pal_total": 29671200
+ }
+}
