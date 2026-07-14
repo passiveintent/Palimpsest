@@ -1,0 +1,154 @@
+{
+ "scenario": "s1",
+ "label": "postfix",
+ "seed": 42,
+ "f1": true,
+ "f2": true,
+ "f3": true,
+ "c_gate": 1,
+ "kappa": 0.7,
+ "n": 901,
+ "windows": 432,
+ "solve_every": 1,
+ "solves": 330,
+ "events": 0,
+ "quiet_solves": 90,
+ "quiet_events": 0,
+ "quiet_events_per_day": 0,
+ "quiet_mean_support": 4.7,
+ "quiet_mean_resid": 8.25968575473082,
+ "quiet_mean_gate": 7.385631635425035,
+ "sigma_hat_last": 0.25489457883113115,
+ "storm_windows": 0,
+ "storm_duty": 0,
+ "drift_flags": 0,
+ "drift_false": 0,
+ "c_persist": 0,
+ "frozen_max": 0,
+ "frozen_at_end": 0,
+ "routed_has_target": false,
+ "bursts": [
+  {
+   "magnitude": 1,
+   "start_win": 39,
+   "dur_win": 90,
+   "targets": 1,
+   "det": {
+    "c": {
+     "detected": false,
+     "lag_sec": 0
+    },
+    "cs": {
+     "detected": false,
+     "lag_sec": 0
+    },
+    "k15": {
+     "detected": false,
+     "lag_sec": 0
+    },
+    "k30": {
+     "detected": false,
+     "lag_sec": 0
+    },
+    "routed": {
+     "detected": false,
+     "lag_sec": 0
+    },
+    "storm": {
+     "detected": false,
+     "lag_sec": 0
+    }
+   },
+   "cs_spurious": 0,
+   "c_spurious": 0
+  },
+  {
+   "magnitude": 1,
+   "start_win": 166,
+   "dur_win": 90,
+   "targets": 1,
+   "det": {
+    "c": {
+     "detected": false,
+     "lag_sec": 0
+    },
+    "cs": {
+     "detected": false,
+     "lag_sec": 0
+    },
+    "k15": {
+     "detected": false,
+     "lag_sec": 0
+    },
+    "k30": {
+     "detected": false,
+     "lag_sec": 0
+    },
+    "routed": {
+     "detected": false,
+     "lag_sec": 0
+    },
+    "storm": {
+     "detected": false,
+     "lag_sec": 0
+    }
+   },
+   "cs_spurious": 0,
+   "c_spurious": 0
+  },
+  {
+   "magnitude": 1,
+   "start_win": 293,
+   "dur_win": 90,
+   "targets": 1,
+   "det": {
+    "c": {
+     "detected": false,
+     "lag_sec": 0
+    },
+    "cs": {
+     "detected": false,
+     "lag_sec": 0
+    },
+    "k15": {
+     "detected": false,
+     "lag_sec": 0
+    },
+    "k30": {
+     "detected": false,
+     "lag_sec": 0
+    },
+    "routed": {
+     "detected": false,
+     "lag_sec": 0
+    },
+    "storm": {
+     "detected": false,
+     "lag_sec": 0
+    }
+   },
+   "cs_spurious": 0,
+   "c_spurious": 0
+  }
+ ],
+ "bytes": {
+  "dumb_k15": 2729723,
+  "dumb_k30": 1399930,
+  "dumb_routed": 762264,
+  "gorilla_10s": 533247,
+  "pal_golden": 584552,
+  "pal_kdelta": 150488,
+  "pal_residual": 748080,
+  "pal_total": 1483120
+ },
+ "bytes_per_day": {
+  "dumb_k15": 54594460,
+  "dumb_k30": 27998600,
+  "dumb_routed": 15245280,
+  "gorilla_10s": 10664940,
+  "pal_golden": 11691040,
+  "pal_kdelta": 3009760,
+  "pal_residual": 14961600,
+  "pal_total": 29662400
+ }
+}

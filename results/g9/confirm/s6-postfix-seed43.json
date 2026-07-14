@@ -1,0 +1,88 @@
+{
+ "scenario": "s6",
+ "label": "postfix",
+ "seed": 43,
+ "f1": true,
+ "f2": true,
+ "f3": true,
+ "c_gate": 1,
+ "kappa": 0.7,
+ "n": 901,
+ "windows": 309,
+ "solve_every": 1,
+ "solves": 212,
+ "events": 100,
+ "quiet_solves": 2,
+ "quiet_events": 0,
+ "quiet_events_per_day": 0,
+ "quiet_mean_support": 6,
+ "quiet_mean_resid": 8.540212537351056,
+ "quiet_mean_gate": 7.328496512302074,
+ "sigma_hat_last": 0.7019414671096963,
+ "storm_windows": 15,
+ "storm_duty": 0.054945054945054944,
+ "drift_flags": 11957,
+ "drift_false": 0,
+ "c_persist": 1,
+ "frozen_max": 299,
+ "frozen_at_end": 206,
+ "routed_has_target": true,
+ "bursts": [
+  {
+   "magnitude": 15,
+   "start_win": 39,
+   "dur_win": 270,
+   "targets": 270,
+   "det": {
+    "c": {
+     "detected": true,
+     "lag_sec": 30
+    },
+    "cs": {
+     "detected": true,
+     "lag_sec": 230
+    },
+    "k15": {
+     "detected": true,
+     "lag_sec": 0
+    },
+    "k30": {
+     "detected": true,
+     "lag_sec": 0
+    },
+    "routed": {
+     "detected": true,
+     "lag_sec": 10
+    },
+    "storm": {
+     "detected": true,
+     "lag_sec": 0
+    }
+   },
+   "cs_spurious": 292,
+   "c_spurious": 0
+  }
+ ],
+ "bytes": {
+  "dumb_k15": 1970944,
+  "dumb_k30": 1020360,
+  "dumb_routed": 566442,
+  "gorilla_10s": 381420,
+  "pal_fallback": 19470,
+  "pal_golden": 438414,
+  "pal_kdelta": 108555,
+  "pal_residual": 502876,
+  "pal_total": 1069315
+ },
+ "bytes_per_day": {
+  "dumb_k15": 55109890.485436894,
+  "dumb_k30": 28530454.368932042,
+  "dumb_routed": 15838378.252427185,
+  "gorilla_10s": 10664947.572815534,
+  "pal_fallback": 544403.8834951457,
+  "pal_golden": 12258566.213592233,
+  "pal_kdelta": 3035324.2718446604,
+  "pal_residual": 14060998.834951457,
+  "pal_total": 29899293.203883495
+ }
+}

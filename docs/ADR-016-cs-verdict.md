@@ -1,6 +1,7 @@
 # ADR-016 — Gate G9: Final verdict on the compressed-sensing layer
 
-- Status: PRE-REGISTERED — results pending
+- Status: **DECIDED — VERDICT: KILL** (at K2, unique value). Retire
+  compressed-sensing substrate (a) as a detector; see the salvage plan.
 - Date: 2026-07-14
 - Protocol: pre-registered confirmatory experiment. The "Pre-registered
   predictions" and "Kill criteria" sections below were copied verbatim from
@@ -197,3 +198,267 @@ support 196).
   observation recorded before confirmation: pre-fix CS "detections" at
   this fleet are partly chance membership in ~170-500-series spurious
   support sets; the spurious-per-event metric is the qualifier.
+
+### Phase 2 — calibration record (calibration set ONLY; seeds {100,101})
+
+Raw curves: `results/g9/calib/calib-seed100.csv`,
+`results/g9/calib/calib-seed101.csv` (events/day over the full
+kappa × c_gate grid). One simulated day of quiet traffic per seed, 2868
+solved windows each.
+
+**Quiet events/day at c_gate = 1.0 (the smallest grid gate), by kappa:**
+
+| kappa | seed 100 | seed 101 | support non-empty (frac) | mean residual ratio |
+| --- | --- | --- | --- | --- |
+| 0.4 | 3376 | 3262 | 1.00 | 0.99 |
+| 0.5 | 192 | 136 | 1.00 | 1.05 |
+| 0.6 | 6.0 | 2.0 | 1.00 | 1.09 |
+| **0.7** | **0.0** | **0.0** | 0.99 | 1.12 |
+| 0.8 | 0.0 | 0.0 | 0.88 | 1.14 |
+| 1.0 | 0.0 | 0.0 | 0.33 | 1.16 |
+
+Applying the locked selection rule (declared before calibration): for
+kappa ∈ {0.4, 0.5, 0.6} no grid c_gate meets the ≤ 0.5 events/day budget
+(the minimum over c_gate is 3376 / 192 / 6 events/day respectively, all at
+c_gate = 1.0). kappa = 0.7 is the smallest (most sensitive) kappa for
+which a grid c_gate meets the budget, and the only grid c_gate that meets
+it at kappa = 0.7 is 1.0 (c_gate = 1.05 already yields 72 / 44 events/day).
+
+**LOCKED PARAMETERS: kappa = 0.7, c_gate = 1.0.** No parameter is touched
+again after this line.
+
+Calibration finding that survives into the verdict (recorded now, not
+after confirmation): the *mean quiet residual ratio*
+`residual / (sqrt(n)·sigma_hat)` is ≈ 1.0–1.16 across every kappa — the
+post-debias solve residual is dominated by un-modeled fleet noise that
+scales as `sqrt(n)·sigma` whether or not the target anomaly is present.
+F1's normalized gate at c_gate = 1.0 therefore sits *just below* the
+typical quiet residual: it buys precision (0 false events/day) precisely
+because it fires only when a recovered anomaly pulls the residual ratio
+under 1.0. Whether a weak anomaly can do that is exactly what S1/S3 test.
+This is the structural reason P3 (S1 stays in the dead zone) was written
+with medium-high confidence.
+
+Calibration-magnitude anomaly check (magnitudes {3, 7}, disjoint from
+every confirmatory magnitude): run as `--g9-scenario calib-anom`, recorded
+in `results/g9/calib/` — used only to confirm the locked config recovers
+*some* signal at supra-confirmatory magnitudes, never to adjust it.
+
+### Phase 3 — confirmatory results (seeds {41,42,43}, run once, locked params)
+
+Raw per-run JSON in `results/g9/confirm/` (one file per scenario × config ×
+seed); consolidated tables in `results/g9/confirm/SUMMARY.md`; exact
+commands in `scripts/g9-confirm.sh 1.0 0.7`. Post-fix dead-zone map in
+`results/g9/confirm/sweep-postfix-seed*.md`.
+
+**Detection rate by detector, post-fix, fraction of bursts:**
+
+| scenario | CS (a) | subst (c) | storm | k30 | k15 | routed |
+| --- | --- | --- | --- | --- | --- | --- |
+| S1 payment weak signal +1.0 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 | 0/9 |
+| S2 AZ outage 30 min +100 | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 |
+| S4 sub-keyframe 20–30 s +30 | **0/90** | 0/90 | 0/90 | 45/90 | **90/90** | 30/90 |
+| S6 deploy wave 30% +15 | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 |
+
+**S3 magnitude ramp — post-fix CS detection (K1 evidence):**
+
+| magnitude | CS post | CS pre | subst (c) post |
+| --- | --- | --- | --- |
+| 1× | 0/90 | 89/90 | 0/90 |
+| 2× | 0/90 | 67/90 | 0/90 |
+| 5× | 0/90 | 46/90 | 0/90 |
+| 10× | 0/90 | 46/90 | 57/90 |
+| 20× | 52/90 | 46/90 | 90/90 |
+
+Post-fix CS detection is monotone non-decreasing in magnitude
+(0,0,0,0,0.578). Pre-fix is the donut: 0.989 → 0.744 → 0.511 → 0.511 →
+0.511, i.e. the smallest anomaly detected *more often* than the largest.
+F2 removed the pathology.
+
+**Detection lag where detected (post-fix), seconds — CS is never fastest:**
+
+| scenario | CS lag | subst (c) lag | storm lag |
+| --- | --- | --- | --- |
+| S2 | 210 | 30 | 0 |
+| S6 | 197 | 30 | 0 |
+
+**Quiet-month precision (S5, 2 days/seed):**
+
+| config | quiet events/day (per seed) | mean support |
+| --- | --- | --- |
+| pre-fix | [5415, 5441, 5415] | 165.2 |
+| post-fix | [1, 0, 0] | 4.6 |
+
+**Byte ledger, post-fix (KiB/day, mean over seeds):**
+
+| scenario | Palimpsest total | of which sketch/RESIDUAL | Gorilla 1.37 B | keyframe 30 s | keyframe 15 s | routed-exact 5% |
+| --- | --- | --- | --- | --- | --- | --- |
+| S1 | 28975 | 14611 | 10415 | 27344 | 53316 | 14896 |
+| S2 | 28831 | 13615 | 10415 | 26948 | 53928 | 15126 |
+| S4 | 28096 | 14606 | 10415 | 26780 | 53548 | 14022 |
+| S6 | 29197 | 13731 | 10415 | 27868 | 53813 | 15466 |
+| S5 | 27875 | 14611 | 10415 | 26527 | 53054 | 13796 |
+
+Post-fix dead-zone sweep (F1+F2, seed 41): the recovery floor did **not**
+drop — in the σ=0.05/0.1 columns it *rose* (0.4/0.8 → 51.2/102.4), because
+the precision-calibrated gate (c_gate=1.0) fires only when a recovered
+anomaly pulls the residual ratio under 1.0, which small-to-moderate
+anomalies cannot do against a `sqrt(n)·sigma` noise floor. The σ≥0.2
+columns remain dead exactly as before; the storm/detection floors are
+unchanged (storm physics, untouched by F1/F2). The fixes bought precision,
+not reach.
+
+Calibration-magnitude sanity check (magnitudes {3,7} on the payment class,
+`results/g9/calib/calib-anom-*`): post-fix CS detects 0/many at both
+magnitudes — the payment class is structurally dead to CS at every
+magnitude up to at least 7×, not just at the S1 magnitude of 1.
+
+---
+
+## K-gate evaluation (in order; first match decides)
+
+**K1 — S3 monotonicity.** Post-fix CS detection over magnitude is
+(0, 0, 0, 0, 0.578), monotone non-decreasing (no higher magnitude detected
+with lower probability, tolerance 0.05). The pre-fix donut hole is gone.
+**K1 does not fire** — the decoder pathology was genuinely repaired by F2.
+Proceed.
+
+**K2 — unique-detection set.** Incidents CS detects that substrate (c)+F3
+misses or detects >60 s later, across S1–S4. Per seed: **0, 0, 0.**
+Pooled: **0.** Every post-fix CS detection is dominated by a classical
+detector:
+- S1: CS detects nothing (0/9).
+- S2/S6 (mass events): CS detects, but at 197–250 s lag vs substrate (c)
+  at 30 s and storm at 0 s — CS is 150–220 s *slower*, never unique.
+- S3: CS's only non-zero magnitude is 20× (52/90); substrate (c) detects
+  20× at 90/90 and 10× at 57/90 — CS's hits are a strict subset of c's.
+- S4 (the one class CS could uniquely own — sub-keyframe, invisible to
+  keyframe drift): post-fix CS detects **0/90**. The class exists and is
+  real (k15 catches 90/90), but CS does not own it.
+
+The unique-detection set is **EMPTY across S1–S4 on every seed.**
+**K2 fires. VERDICT = KILL.**
+
+**K3 — precision (not reached; would pass).** For the record: post-fix
+quiet-month events are 0.33/deployment-day (well under the ≤1/day budget)
+and mean spurious support fell from 165 to 4.6. The precision fixes worked;
+they simply have nothing to be precise *about*, because K2's unique set is
+empty.
+
+**K4 — dumb-money (not reached; would also KILL).** Vacuous under the
+protocol (no unique class survives K2), but the byte economics confirm the
+direction the reviewer predicted:
+- The sub-keyframe class (S4) is detected **only** by the 15 s exact
+  cadence (100% recall) — Palimpsest's CS layer gets 0%. At *any* byte
+  count Palimpsest does not achieve the ≥90% recall bar on this class, so
+  the only config that clears the bar is classical. Classical wins by
+  default.
+- For the mass events (S2/S6) that Palimpsest *does* catch, it catches
+  them via substrate (c)/storm — not the sketch — and a plain 30 s
+  keyframe cadence (26.5–27.9 MiB/day) is **cheaper** than full Palimpsest
+  (27.9–29.2 MiB/day) while detecting the same mass events via drift at
+  the same 30 s and half the sub-keyframe transients besides.
+- The sketch/RESIDUAL layer is ~47–52% of Palimpsest's wire
+  (≈13.6–14.6 MiB/day). Post-fix it uniquely detects nothing. Deleting it
+  roughly halves the wire at zero cost to unique detection.
+
+**VERDICT: KILL.** The compressed-sensing deviation substrate (a) ships no
+incident that a classical detector on the same data does not catch at
+least as well and usually faster and cheaper. It dies at K2 — unique
+value — having been given all three principled repairs and a fair fight.
+
+## Prediction scorecard (pre-registered, resolved)
+
+| # | prediction | confidence | outcome |
+| --- | --- | --- | --- |
+| P1 | S3 monotonicity restored by F2 (donut dies) | high | **CONFIRMED** — post-fix 0,0,0,0,0.578 monotone; pre-fix donut present |
+| P2 | S5 spurious support drops to single digits under F1 | med-high | **CONFIRMED** — 165 → 4.6; quiet events 5424/day → 0.33/day |
+| P3 | S1 floor improves <2× and stays in the dead zone | med-high | **CONFIRMED** — S1 undetectable by CS post-fix; pooled-noise physics |
+| P4 | S4 detected by CS (native turf) | medium | **REFUTED** — post-fix CS 0/90 on S4; k15 owns it 90/90 |
+| P5 | K4 goes against CS; classical matches S4 recall cheaper | medium | **CONFIRMED (stronger)** — CS never reaches K4; classical is the *only* config with S4 recall at all |
+
+Net: the reviewer went 4/5. The one miss (P4) was the single prediction
+*for* the CS layer — the optimistic case's best scenario failed too, which
+is the outcome the gate was built to be able to embarrass. The verdict
+(KILL) matches the net expectation, and it lands one gate earlier than the
+fallback (K2, unique value) rather than needing the dumb-money comparison
+(K4) to close it.
+
+## Protocol compliance
+
+- Pre-registration (kill criteria + predictions + locked definitions)
+  written to this file before any code change (commit 314bae4).
+- Parameters calibrated only on the calibration set (seeds {100,101}) and
+  locked (kappa=0.7, c_gate=1.0) before the confirmatory run; the
+  selection rule was declared before calibration.
+- Confirmatory scenarios (seeds {41,42,43}) run once, with locked
+  parameters. No parameter was touched after seeing confirmatory results.
+- The three fixes were implemented exactly as specified and nothing else
+  (F2's stage-2 refit was found already present and recorded as-found, not
+  re-implemented). No new detection heuristic, scenario edit, or gate
+  nudge was added.
+- Identical seeds and identical world draws pre/post fix (pinned by
+  `TestG9WorldDeterministicAcrossConfigs`). Golden vectors and the
+  existing `--deadzone`/`--month` generators are untouched.
+- No measurement was dropped or substituted; every scenario ran and is
+  reported.
+- **No protocol violations recorded.** No mid-run amendment was made.
+
+## Salvage plan (KILL path)
+
+Delete the compressed-sensing deviation substrate (a) — the sketch encode
+path, FISTA/Group-OMP recovery, and the residual gate — as a *detection*
+mechanism. Retain, as an explicitly classical stack, the parts the
+confirmatory run showed carry the actual detection value:
+
+1. **Two-level identity + exact keyframes** (ADR-003/008/011): the
+   substrate (c) keyframe-drift detector caught every mass event at 30 s
+   and every S3 anomaly ≥10× that mattered, at a byte cost competitive
+   with or below full Palimpsest.
+2. **Interestingness routing** (ADR-005/COSTS.md): keep the top-K / storm
+   heavy-hitter path as the mechanism that promotes a small fraction of
+   series to exact 10–15 s cadence. That routed-exact layer is what
+   actually owns the sub-keyframe class, and at 5% routing it is cheaper
+   than the sketch it would replace.
+3. **Storm / top-K breaker** (ADR-004) as a first-class classical
+   density/onset detector — it fired at 0 s on every mass event.
+4. **Conformal engine repointed at keyframe deltas** (palimpsest-conformal,
+   ADR-002/004 there): the nonconformity scoring that currently sits over
+   recovered residuals moves onto substrate (c)'s keyframe-to-keyframe
+   deltas, where the signal actually is.
+5. **ADR-015 cross-emitter fusion** (the merged tier) spun out as research,
+   not shipped: it depends on the same recovery substrate this gate killed.
+
+What the wire keeps: exact keyframes (byte-parity, cheap-tier storage),
+KDELTA cadence, dict deltas, golden re-announcement, storm FALLBACK frames,
+dashcam snapshots. What it loses: the RESIDUAL sketch frames (~half the
+wire) and the FISTA decode path. The per-series-billing arbitrage
+(COSTS.md) is unaffected — it never depended on substrate (a).
+
+### Negative-result writeup — outline
+
+1. **Thesis.** Compressed sensing promises sub-keyframe, sub-storm anomaly
+   recovery from a fixed-size sketch. Measured end-to-end at fleet scale
+   under a pre-registered gate, substrate (a) adds no detection a classical
+   keyframe/route/storm stack on the same bytes does not already provide.
+2. **The two failure modes, separated.** (a) *Decoder pathology* — the
+   λ ∝ max|Φᵀy| coupling made detectability non-monotone in magnitude (the
+   donut). F2 fixes it (K1 passes). (b) *Physics* — pooled fleet noise sets
+   a `sqrt(n)·sigma` residual floor; a precision-viable gate then fires only
+   for anomalies large enough to also trip the storm breaker or move a
+   keyframe. The two failure modes are independent, and fixing the first
+   does not touch the second.
+3. **The dumb-money frame.** Detection value must beat not just the old CS
+   layer but the cheapest classical way of buying the same detection. On
+   every confirmatory class it does not: mass events go to drift/storm
+   faster and cheaper; the sub-keyframe class goes to routed 15 s exact,
+   which is the only thing that detects it at all.
+4. **What compressed sensing needs to win, and why this fleet denies it.**
+   Sparsity in a basis the sketch preserves, and an anomaly-to-pooled-noise
+   ratio above the gate — i.e. `epsilon ≳ c·sqrt(n)·sigma`. Real
+   Kubernetes-shaped fleets are dense (deploy waves) or low-SNR-per-series
+   (the payment class), and the interesting anomalies live below that bar.
+5. **Honest scope.** The map is one-anomaly-at-a-time, single view, single
+   shard, i.i.d. per-series noise; a genuinely sparse, high-SNR,
+   basis-aligned regime could still favor CS, but this gate's fleet is the
+   product's stated target and it does not.

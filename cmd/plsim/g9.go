@@ -35,7 +35,7 @@ import (
 //   - CS substrate (a): FISTA recovery + residual gate, pre-fix
 //     (lambda = 0.05 * max|Phi^T y|, fixed gate 5.0) or post-fix
 //     (F2: lambda = kappa * sigma_hat * sqrt(2 ln N);
-//      F1: gate = c_gate * sqrt(n) * sigma_hat).
+//     F1: gate = c_gate * sqrt(n) * sigma_hat).
 //   - substrate (c): keyframe-to-keyframe drift at the production
 //     threshold, optionally with F3 baseline freeze.
 //   - the ADR-004 storm/FALLBACK path.
@@ -560,16 +560,16 @@ type g9Engine struct {
 
 	bytes map[string]int64
 
-	solves, quietSolves, quietEvents  int
-	quietSupportSum                   int
-	quietResidSum, quietGateSum       float64
-	sigmaLast                         float64
-	frozenMax                         int
-	solveEvery                        int
-	vals                              []float64
-	valueMap                          map[string]float64
-	routed                            map[int]bool
-	samplers                          []*g9Sampler
+	solves, quietSolves, quietEvents int
+	quietSupportSum                  int
+	quietResidSum, quietGateSum      float64
+	sigmaLast                        float64
+	frozenMax                        int
+	solveEvery                       int
+	vals                             []float64
+	valueMap                         map[string]float64
+	routed                           map[int]bool
+	samplers                         []*g9Sampler
 }
 
 func newG9Engine(cfg *g9Config, world *g9World, withSamplers bool) *g9Engine {
